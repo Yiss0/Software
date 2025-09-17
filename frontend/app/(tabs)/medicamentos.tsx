@@ -1,15 +1,16 @@
-import { Clock, CreditCard as Edit, Pill, Plus, Trash2, X } from 'lucide-react-native';
 import React, { useState } from 'react';
-import {
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  ScrollView, 
+  TouchableOpacity,
+  TextInput,
+  Modal
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pill, Plus, CreditCard as Edit, Trash2, Clock, X, Scan } from 'lucide-react-native';
+import EscanearMedicamento from '@/components/EscanearMedicamento';
 
 interface Medicamento {
   id: string;
@@ -41,6 +42,7 @@ export default function MedicamentosScreen() {
   ]);
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [escanerVisible, setEscanerVisible] = useState(false);
   const [nuevoMedicamento, setNuevoMedicamento] = useState({
     nombre: '',
     dosis: '',
@@ -67,16 +69,30 @@ export default function MedicamentosScreen() {
     }
   };
 
+  const manejarEscaneo = (codigo: string) => {
+    // Aquí se procesaría el código escaneado
+    console.log('Código escaneado:', codigo);
+    setModalVisible(true);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Mis Medicamentos</Text>
-        <TouchableOpacity 
-          style={styles.addButton}
-          onPress={() => setModalVisible(true)}
-        >
-          <Plus size={24} color="#FFFFFF" strokeWidth={2} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.scanButton}
+            onPress={() => setEscanerVisible(true)}
+          >
+            <Scan size={24} color="#FFFFFF" strokeWidth={2} />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.addButton}
+            onPress={() => setModalVisible(true)}
+          >
+            <Plus size={24} color="#FFFFFF" strokeWidth={2} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -204,6 +220,13 @@ export default function MedicamentosScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Componente de escaneo */}
+      <EscanearMedicamento
+        visible={escanerVisible}
+        onClose={() => setEscanerVisible(false)}
+        onMedicamentoEscaneado={manejarEscaneo}
+      />
     </SafeAreaView>
   );
 }
@@ -224,6 +247,23 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '700',
     color: '#1F2937',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  scanButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#16A34A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   addButton: {
     width: 48,
