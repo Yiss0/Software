@@ -1,443 +1,133 @@
-import React, { useState } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity,
-  TextInput,
-  Modal
-} from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Pill, Plus, CreditCard as Edit, Trash2, Clock, X, Scan } from 'lucide-react-native';
-import EscanearMedicamento from '@/components/EscanearMedicamento';
+import { Link, useFocusEffect } from 'expo-router';
+import { Plus, Pill, Clock, Pencil, Trash2 } from 'lucide-react-native';
+import { useAuth } from '../../context/AuthContext';
+import * as db from '../../services/database';
+import * as NotificationService from '../../services/notificationService';
 
-interface Medicamento {
-  id: string;
-  nombre: string;
-  dosis: string;
-  frecuencia: string;
-  horarios: string[];
-  instrucciones: string;
-}
+type MedicationListItem = db.Medication & { schedules: db.Schedule[] };
+
+const formatTimeToAMPM = (time: string) => {
+    if (!/^\d{2}:\d{2}$/.test(time)) return time;
+    const [hours, minutes] = time.split(':');
+    const h = parseInt(hours, 10);
+    const suffix = h >= 12 ? 'p. m.' : 'a. m.';
+    const formattedHour = h % 12 === 0 ? 12 : h % 12;
+    return `${String(formattedHour).padStart(2, '0')}:${minutes} ${suffix}`;
+};
+
+const getFrequencyText = (schedule: db.Schedule): string => {
+  const formattedTime = formatTimeToAMPM(schedule.time);
+  switch (schedule.frequencyType) {
+      case 'DAILY': return `Cada día a las ${formattedTime}`;
+      case 'HOURLY': return `Cada ${schedule.frequencyValue} horas (desde ${formattedTime})`;
+      case 'WEEKLY': const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; const days = schedule.daysOfWeek?.split(',').map(d => dayNames[parseInt(d, 10)]).join(', ') || ''; return `Semanal (${days}) a las ${formattedTime}`;
+      default: return `Horario a las ${formattedTime}`;
+  }
+};
+
+const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListItem; onDelete: () => void; }) => {
+    return (
+      <View style={styles.medItem}>
+        <View style={styles.medInfoContainer}>
+          <View style={styles.medIconContainer}><Pill size={24} color="#2563EB" /></View>
+          <View style={styles.medInfo}>
+            <Text style={styles.medName}>{item.name}</Text>
+            <Text style={styles.medDosage}>{item.dosage} - Quedan: {item.quantity}</Text>
+            {item.instructions ? <Text style={styles.medInstructions}>Instrucciones: {item.instructions}</Text> : null}
+            {item.schedules.map(schedule => (
+                <View key={schedule.id} style={styles.schedulesContainer}>
+                    <Clock size={16} color="#6B7280" style={{ marginRight: 5 }} />
+                    <Text style={styles.scheduleText}>{getFrequencyText(schedule)}</Text>
+                </View>
+            ))}
+          </View>
+        </View>
+        <View style={styles.actionButtons}>
+            <Link href={{ pathname: "/edit-medication", params: { medId: item.id } }} asChild>
+                <TouchableOpacity style={styles.editButton}><Pencil size={20} color="#3B82F6" /></TouchableOpacity>
+            </Link>
+            <TouchableOpacity style={styles.deleteButton} onPress={onDelete}><Trash2 size={20} color="#EF4444" /></TouchableOpacity>
+        </View>
+      </View>
+    );
+});
 
 export default function MedicamentosScreen() {
-  const [medicamentos, setMedicamentos] = useState<Medicamento[]>([
-    {
-      id: '1',
-      nombre: 'Aspirina',
-      dosis: '100mg',
-      frecuencia: 'Una vez al día',
-      horarios: ['08:00'],
-      instrucciones: 'Tomar con alimentos'
-    },
-    {
-      id: '2',
-      nombre: 'Metformina',
-      dosis: '500mg',
-      frecuencia: 'Dos veces al día',
-      horarios: ['08:00', '20:00'],
-      instrucciones: 'Tomar antes de las comidas'
+  const [medicamentos, setMedicamentos] = useState<MedicationListItem[]>([]);
+  const { database, session } = useAuth();
+
+  const cargarMedicamentos = useCallback(async () => {
+    if (database && session) {
+      const meds = await db.getMedicationsWithSchedules(database, parseInt(session, 10));
+      setMedicamentos(meds);
     }
-  ]);
+  }, [database, session]);
 
-  const [modalVisible, setModalVisible] = useState(false);
-  const [escanerVisible, setEscanerVisible] = useState(false);
-  const [nuevoMedicamento, setNuevoMedicamento] = useState({
-    nombre: '',
-    dosis: '',
-    frecuencia: '',
-    horarios: [''],
-    instrucciones: ''
-  });
+  useFocusEffect(
+    useCallback(() => {
+      cargarMedicamentos();
+    }, [cargarMedicamentos])
+  );
 
-  const agregarMedicamento = () => {
-    if (nuevoMedicamento.nombre && nuevoMedicamento.dosis) {
-      const nuevo: Medicamento = {
-        id: Date.now().toString(),
-        ...nuevoMedicamento
-      };
-      setMedicamentos([...medicamentos, nuevo]);
-      setNuevoMedicamento({
-        nombre: '',
-        dosis: '',
-        frecuencia: '',
-        horarios: [''],
-        instrucciones: ''
-      });
-      setModalVisible(false);
-    }
-  };
-
-  const manejarEscaneo = (codigo: string) => {
-    // Aquí se procesaría el código escaneado
-    console.log('Código escaneado:', codigo);
-    setModalVisible(true);
+  const handleDelete = async (med: MedicationListItem) => {
+    Alert.alert( "Eliminar Medicamento", `¿Estás seguro de que quieres eliminar "${med.name}"?`,
+        [
+            { text: "Cancelar", style: "cancel" },
+            { text: "Sí, Eliminar", style: "destructive", onPress: async () => {
+                if (database && session) {
+                    const success = await db.deleteMedication(database, med.id);
+                    if (success) {
+                        await NotificationService.rescheduleAllNotifications(database, parseInt(session));
+                        await cargarMedicamentos();
+                        Alert.alert("Éxito", "Medicamento eliminado.");
+                    } else {
+                        Alert.alert("Error", "No se pudo eliminar el medicamento.");
+                    }
+                }
+            }}
+        ]
+    );
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Mis Medicamentos</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity 
-            style={styles.scanButton}
-            onPress={() => setEscanerVisible(true)}
-          >
-            <Scan size={24} color="#FFFFFF" strokeWidth={2} />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.addButton}
-            onPress={() => setModalVisible(true)}
-          >
-            <Plus size={24} color="#FFFFFF" strokeWidth={2} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {medicamentos.map((medicamento) => (
-          <View key={medicamento.id} style={styles.medicationCard}>
-            <View style={styles.medicationHeader}>
-              <View style={styles.medicationIcon}>
-                <Pill size={28} color="#2563EB" strokeWidth={2} />
-              </View>
-              <View style={styles.medicationTitleContainer}>
-                <Text style={styles.medicationTitle}>{medicamento.nombre}</Text>
-                <Text style={styles.medicationDose}>{medicamento.dosis}</Text>
-              </View>
-              <View style={styles.medicationActions}>
-                <TouchableOpacity style={styles.editButton}>
-                  <Edit size={20} color="#6B7280" strokeWidth={2} />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.deleteButton}>
-                  <Trash2 size={20} color="#DC2626" strokeWidth={2} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles.medicationDetails}>
-              <Text style={styles.frequencyText}>{medicamento.frecuencia}</Text>
-              
-              <View style={styles.horariosContainer}>
-                <Clock size={16} color="#374151" strokeWidth={2} />
-                <Text style={styles.horariosText}>
-                  {medicamento.horarios.join(', ')}
-                </Text>
-              </View>
-              
-              {medicamento.instrucciones && (
-                <Text style={styles.instructionsText}>
-                  📝 {medicamento.instrucciones}
-                </Text>
-              )}
-            </View>
-          </View>
-        ))}
-      </ScrollView>
-
-      {/* Modal para agregar medicamento */}
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Nuevo Medicamento</Text>
-              <TouchableOpacity 
-                onPress={() => setModalVisible(false)}
-                style={styles.closeButton}
-              >
-                <X size={24} color="#6B7280" strokeWidth={2} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalBody}>
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Nombre del medicamento *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={nuevoMedicamento.nombre}
-                  onChangeText={(text) => setNuevoMedicamento({...nuevoMedicamento, nombre: text})}
-                  placeholder="Ej: Aspirina"
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Dosis *</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={nuevoMedicamento.dosis}
-                  onChangeText={(text) => setNuevoMedicamento({...nuevoMedicamento, dosis: text})}
-                  placeholder="Ej: 100mg"
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Frecuencia</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={nuevoMedicamento.frecuencia}
-                  onChangeText={(text) => setNuevoMedicamento({...nuevoMedicamento, frecuencia: text})}
-                  placeholder="Ej: Una vez al día"
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Instrucciones especiales</Text>
-                <TextInput
-                  style={[styles.textInput, styles.textArea]}
-                  value={nuevoMedicamento.instrucciones}
-                  onChangeText={(text) => setNuevoMedicamento({...nuevoMedicamento, instrucciones: text})}
-                  placeholder="Ej: Tomar con alimentos"
-                  placeholderTextColor="#9CA3AF"
-                  multiline={true}
-                  numberOfLines={3}
-                />
-              </View>
-            </ScrollView>
-
-            <View style={styles.modalFooter}>
-              <TouchableOpacity 
-                style={styles.cancelButton}
-                onPress={() => setModalVisible(false)}
-              >
-                <Text style={styles.cancelButtonText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.saveButton}
-                onPress={agregarMedicamento}
-              >
-                <Text style={styles.saveButtonText}>Guardar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Componente de escaneo */}
-      <EscanearMedicamento
-        visible={escanerVisible}
-        onClose={() => setEscanerVisible(false)}
-        onMedicamentoEscaneado={manejarEscaneo}
+      <View style={styles.header}><Text style={styles.title}>Mis Medicamentos</Text></View>
+      <FlatList
+        data={medicamentos}
+        renderItem={({ item }) => <MedicationItem item={item} onDelete={() => handleDelete(item)} />}
+        keyExtractor={(item) => item.id.toString()}
+        contentContainerStyle={styles.listContainer}
+        ListEmptyComponent={() => ( <View style={styles.emptyContainer}><Text style={styles.emptyText}>No tienes medicamentos registrados.</Text><Text style={styles.emptySubText}>Presiona el botón '+' para añadir el primero.</Text></View> )}
       />
+      <Link href="/add-medication" asChild>
+        <TouchableOpacity style={styles.fab}><Plus size={32} color="#FFFFFF" /></TouchableOpacity>
+      </Link>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  scanButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#16A34A',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  addButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  scrollView: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  medicationCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  medicationHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  medicationIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#EBF4FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
-  },
-  medicationTitleContainer: {
-    flex: 1,
-  },
-  medicationTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 2,
-  },
-  medicationDose: {
-    fontSize: 16,
-    color: '#6B7280',
-  },
-  medicationActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  editButton: {
-    padding: 8,
-  },
-  deleteButton: {
-    padding: 8,
-  },
-  medicationDetails: {
-    gap: 8,
-  },
-  frequencyText: {
-    fontSize: 16,
-    color: '#374151',
-    fontWeight: '500',
-  },
-  horariosContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  horariosText: {
-    fontSize: 16,
-    color: '#374151',
-    fontWeight: '600',
-  },
-  instructionsText: {
-    fontSize: 16,
-    color: '#6B7280',
-    fontStyle: 'italic',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 0,
-    margin: 20,
-    maxHeight: '80%',
-    width: '90%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#1F2937',
-  },
-  closeButton: {
-    padding: 8,
-  },
-  modalBody: {
-    padding: 20,
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    color: '#1F2937',
-    backgroundColor: '#FFFFFF',
-  },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    gap: 12,
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  cancelButton: {
-    flex: 1,
-    paddingVertical: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  saveButton: {
-    flex: 1,
-    paddingVertical: 16,
-    borderRadius: 12,
-    backgroundColor: '#2563EB',
-    alignItems: 'center',
-  },
-  saveButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
+  container: { flex: 1, backgroundColor: '#F8FAFC' }, 
+  header: { paddingHorizontal: 20, paddingVertical: 20 }, 
+  title: { fontSize: 28, fontWeight: '700', color: '#1F2937' }, 
+  listContainer: { paddingHorizontal: 20, paddingBottom: 100 }, 
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: '50%' }, 
+  emptyText: { fontSize: 18, fontWeight: '600', color: '#6B7280' }, 
+  emptySubText: { fontSize: 16, color: '#9CA3AF', marginTop: 8 }, 
+  fab: { position: 'absolute', bottom: 30, right: 30, width: 64, height: 64, borderRadius: 32, backgroundColor: '#2563EB', justifyContent: 'center', alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, }, 
+  medItem: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, },
+  medInfoContainer: { flex: 1, flexDirection: 'row', alignItems: 'flex-start' },
+  medIconContainer: { padding: 12, borderRadius: 8, backgroundColor: '#EBF4FF', marginRight: 16, }, 
+  medInfo: { flex: 1 }, 
+  medName: { fontSize: 18, fontWeight: '600', color: '#1F2937' }, 
+  medDosage: { fontSize: 14, color: '#6B7280', marginTop: 4 }, 
+  medInstructions: { fontSize: 14, color: '#6B7280', marginTop: 8, fontStyle: 'italic' }, 
+  schedulesContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 8, backgroundColor: '#F3F4F6', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignSelf: 'flex-start' }, 
+  scheduleText: { fontSize: 14, color: '#4B5563', fontWeight: '500' },
+  actionButtons: { flexDirection: 'column', gap: 12, marginLeft: 16 },
+  editButton: { padding: 10, backgroundColor: '#EBF4FF', borderRadius: 20 },
+  deleteButton: { padding: 10, backgroundColor: '#FEE2E2', borderRadius: 20 },
 });
