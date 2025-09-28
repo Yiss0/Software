@@ -1,0 +1,17 @@
+# Node / TS
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Env y DB local
+.env
+*.env.local
+prisma/dev.db
+dev.db
+
+# Editor/OS
+.vscode/
+.DS_Store
