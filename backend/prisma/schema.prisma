@@ -2,22 +2,28 @@ generator client {
   provider = "prisma-client-js"
 }
 
-
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
 model User {
-  id          String      @id @default(cuid())
-  name        String
-  email       String?     @unique
-  phone       String?
-  role        String      @default("PATIENT")
-  password    String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  medications Medication[]
+  id                  String       @id @default(cuid())
+  firstName           String
+  lastName            String
+  email               String?      @unique
+  phone               String?
+  role                String       @default("PATIENT")
+  password            String?
+  birthDate           String?
+  address             String?
+  emergencyContact    String?
+  emergencyPhone      String?
+  medicalConditions   String?
+  allergies           String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  medications         Medication[]
 }
 
 model Medication {
@@ -26,6 +32,7 @@ model Medication {
   patientId    String
   name         String
   dosage       String?
+  quantity     Int?
   presentation String?
   instructions String?
   color        String?
@@ -38,31 +45,29 @@ model Medication {
 }
 
 model Schedule {
-  id             String      @id @default(cuid())
-  medication     Medication  @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  id             String     @id @default(cuid())
+  medication     Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
   medicationId   String
-  timeLocal      String
-  daysCsv        String
-  repeatEveryMin Int?
-  snoozeMin      Int?
-  maxSnoozeMin   Int?
-  active         Boolean     @default(true)
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  time           String
+  frequencyType  String
+  frequencyValue Int?
+  daysOfWeek     String?
+  endDate        String?
+  active         Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
   intakes        IntakeLog[]
 }
 
 model IntakeLog {
-  id              String      @id @default(cuid())
-  medication      Medication  @relation(fields: [medicationId], references: [id], onDelete: Cascade)
-  medicationId    String
-  schedule        Schedule?   @relation(fields: [scheduleId], references: [id])
-  scheduleId      String?
-  scheduledFor    DateTime
-  action          String
-  actionAt        DateTime
-  snoozes         Int         @default(0)
-  note            String?
-  deviceOffsetMin Int?
-  createdAt       DateTime    @default(now())
+  id           String     @id @default(cuid())
+  medication   Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  medicationId String
+  schedule     Schedule?  @relation(fields: [scheduleId], references: [id])
+  scheduleId   String?
+  scheduledFor DateTime
+  action       String
+  actionAt     DateTime
+  note         String?
+  createdAt    DateTime   @default(now())
 }

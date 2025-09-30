@@ -1,4 +1,8 @@
-import { Bell, Camera, CreditCard as Edit, Save, Settings, User, LogOut } from 'lucide-react-native';
+// --- 1. IMPORTACIONES NUEVAS ---
+import { Link } from 'expo-router'; // Para la navegación
+import { Bell, Camera, CreditCard as Edit, Save, Settings, User, LogOut, DatabaseZap } from 'lucide-react-native'; // 'DatabaseZap' es un nuevo ícono
+// --- FIN DE IMPORTACIONES NUEVAS ---
+
 import React, { useState, useCallback } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -49,23 +53,23 @@ export default function PerfilScreen() {
   const actualizarCampo = (campo: keyof db.User, valor: string) => {
     setPerfilTemporal(prev => (prev ? { ...prev, [campo]: valor } : null));
   };
-  
+
   const handleLogout = () => {
     Alert.alert(
-        "Cerrar Sesión",
-        "¿Estás seguro de que quieres cerrar sesión?",
-        [
-            { text: "Cancelar", style: "cancel" },
-            { text: "Sí, cerrar sesión", onPress: () => setSession(null) }
-        ]
+      "Cerrar Sesión",
+      "¿Estás seguro de que quieres cerrar sesión?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Sí, cerrar sesión", onPress: () => setSession(null) }
+      ]
     );
   };
 
   if (isLoading || !perfilTemporal) {
     return (
-        <SafeAreaView style={styles.container}>
-            <ActivityIndicator size="large" color="#2563EB" style={{ flex: 1 }} />
-        </SafeAreaView>
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#2563EB" style={{ flex: 1 }} />
+      </SafeAreaView>
     );
   }
 
@@ -155,9 +159,18 @@ export default function PerfilScreen() {
           </View>
         </View>
 
+        {/* --- 2. BOTÓN DE SINCRONIZACIÓN AÑADIDO --- */}
+        <Link href="/sync" asChild>
+          <TouchableOpacity style={styles.syncButton}>
+            <DatabaseZap size={20} color="#1D4ED8" />
+            <Text style={styles.syncButtonText}>Sincronizar Datos con Servidor</Text>
+          </TouchableOpacity>
+        </Link>
+        {/* --- FIN DEL BOTÓN DE SINCRONIZACIÓN --- */}
+        
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <LogOut size={20} color="#DC2626" />
-            <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
+          <LogOut size={20} color="#DC2626" />
+          <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -188,6 +201,10 @@ const styles = StyleSheet.create({
   textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 12, padding: 16, fontSize: 16, color: '#1F2937', backgroundColor: '#FFFFFF' },
   textInputDisabled: { backgroundColor: '#F9FAFB', color: '#6B7280' },
   textArea: { height: 80, textAlignVertical: 'top' },
-  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, backgroundColor: '#FEE2E2', marginBottom: 40, gap: 8 },
+  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, backgroundColor: '#FEE2E2', marginBottom: 20, gap: 8 }, // Ajustado marginBottom
   logoutButtonText: { fontSize: 16, fontWeight: 'bold', color: '#DC2626' },
+  // --- 3. ESTILOS NUEVOS AÑADIDOS ---
+  syncButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, backgroundColor: '#DBEAFE', marginBottom: 20, gap: 8 },
+  syncButtonText: { fontSize: 16, fontWeight: 'bold', color: '#1D4ED8' },
+  // --- FIN DE ESTILOS NUEVOS ---
 });
