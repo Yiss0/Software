@@ -1,13 +1,147 @@
-// 1. Importamos los tipos 'Request' y 'Response' desde Express
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Medication, Schedule, IntakeLog } from '@prisma/client';
 
 const app = express();
 app.use(cors());
 const prisma = new PrismaClient();
 
 app.use(express.json());
+
+// --- LÓGICA DE CÁLCULO (TRADUCIDA DE TU MEDICATIONLOGIC.TS) ---
+
+/**
+ * Calcula la fecha y hora de la próxima toma para una regla de horario individual.
+ */
+function getNextTriggerDate(schedule: Schedule): Date | null {
+  const [hour, minute] = schedule.time.split(':').map(Number);
+  const now = new Date(); // Usamos la hora del servidor
+
+  switch (schedule.frequencyType) {
+    case 'DAILY': {
+      const nextDate = new Date();
+      nextDate.setHours(hour, minute, 0, 0);
+      if (nextDate <= now) {
+        nextDate.setDate(now.getDate() + 1);
+      }
+      return nextDate;
+    }
+    case 'HOURLY': {
+      if (!schedule.frequencyValue) return null;
+      let nextDate = new Date();
+      nextDate.setHours(hour, minute, 0, 0);
+      if (nextDate <= now) {
+        while (nextDate <= now) {
+          nextDate.setHours(nextDate.getHours() + schedule.frequencyValue);
+        }
+      }
+      return nextDate;
+    }
+    case 'WEEKLY': {
+      const days = schedule.daysOfWeek?.split(',').map(Number) || [];
+      if (days.length === 0) return null;
+      
+      for (let i = 0; i < 7; i++) {
+        const checkDate = new Date();
+        checkDate.setDate(now.getDate() + i);
+        const dayOfWeek = checkDate.getDay();
+        
+        if (days.includes(dayOfWeek)) {
+          const potentialNextDate = new Date(checkDate);
+          potentialNextDate.setHours(hour, minute, 0, 0);
+          if (potentialNextDate > now) {
+            return potentialNextDate;
+          }
+        }
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+// Interfaz para el objeto que devolveremos
+interface NextDoseResponse {
+  medication: Medication;
+  schedule: Schedule;
+  triggerDate: Date;
+  isPostponed?: boolean;
+}
+
+// --- NUEVO ENDPOINT PARA LA PRÓXIMA DOSIS ---
+app.get('/patients/:patientId/next-dose', async (req: Request, res: Response) => {
+  const { patientId } = req.params;
+  const now = new Date();
+
+  try {
+    // 1. Obtenemos todos los medicamentos y sus horarios asociados para el paciente
+    const medicationsWithSchedules = await prisma.medication.findMany({
+      where: { patientId, active: true, deletedAt: null },
+      include: { schedules: { where: { active: true } } },
+    });
+
+    // 2. Obtenemos todos los registros de tomas de hoy
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    
+    const todaysLogs = await prisma.intakeLog.findMany({
+        where: {
+            medication: { patientId },
+            actionAt: { gte: startOfToday, lte: endOfToday }
+        }
+    });
+
+    // 3. Calculamos todas las posibles dosis futuras
+    const upcomingDoses: NextDoseResponse[] = [];
+    for (const med of medicationsWithSchedules) {
+      for (const schedule of med.schedules) {
+        const triggerDate = getNextTriggerDate(schedule);
+        if (triggerDate) {
+          const logForThisDose = todaysLogs.find(log => 
+            log.medicationId === med.id &&
+            new Date(log.scheduledFor).getHours() === triggerDate.getHours() &&
+            new Date(log.scheduledFor).getMinutes() === triggerDate.getMinutes()
+          );
+
+          if (logForThisDose) {
+            if (logForThisDose.action === 'POSTPONED') {
+              const postponedTime = new Date(new Date(logForThisDose.actionAt).getTime() + 10 * 60000); // Asumimos 10 min de posposición
+              if (postponedTime > now) {
+                upcomingDoses.push({
+                  medication: med,
+                  schedule: schedule,
+                  triggerDate: postponedTime,
+                  isPostponed: true,
+                });
+              }
+            }
+          } else {
+            upcomingDoses.push({
+              medication: med,
+              schedule: schedule,
+              triggerDate: triggerDate,
+            });
+          }
+        }
+      }
+    }
+
+    // 4. Si no hay ninguna dosis, respondemos que no hay nada
+    if (upcomingDoses.length === 0) {
+      return res.json(null);
+    }
+
+    // 5. Ordenamos las dosis y devolvemos la más cercana
+    upcomingDoses.sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime());
+    res.json(upcomingDoses[0]);
+
+  } catch (error) {
+    console.error("Error calculando la próxima dosis:", error);
+    res.status(500).json({ error: "No se pudo calcular la próxima dosis." });
+  }
+});
 
 // --- RUTAS ORIGINALES (AHORA CON TIPOS) ---
 
@@ -138,23 +272,65 @@ app.post('/intakes', async (req: Request, res: Response) => {
 });
 
 // Listar tomas de paciente por rango de fechas
+// --- RUTA CORREGIDA ---
 app.get('/patients/:patientId/intakes', async (req: Request, res: Response) => {
   const { patientId } = req.params;
   const { from, to } = req.query as { from: string, to: string };
-  const user = await prisma.user.findUnique({ where: { id: patientId } });
-  if (!user) return res.status(404).json({ error: 'Patient not found' });
-  const meds = await prisma.medication.findMany({ where: { patientId } });
-  const medIds = meds.map((m: { id: string }) => m.id);
-  const intakes = await prisma.intakeLog.findMany({
-    where: {
-      medicationId: { in: medIds },
-      scheduledFor: {
-        gte: from ? new Date(from) : undefined,
-        lte: to ? new Date(to) : undefined
+  try {
+    const user = await prisma.user.findUnique({ where: { id: patientId } });
+    if (!user) return res.status(404).json({ error: 'Patient not found' });
+
+    const intakes = await prisma.intakeLog.findMany({
+      where: {
+        medication: { patientId: patientId },
+        scheduledFor: {
+          gte: from ? new Date(from) : undefined,
+          lte: to ? new Date(to) : undefined,
+        },
+      },
+      include: {
+        medication: true, // Esta es la parte clave que faltaba en la versión anterior
+      },
+      orderBy: {
+        actionAt: 'desc',
+      },
+    });
+    res.json(intakes);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// --- ÚNICO CAMBIO EN ESTE ARCHIVO ---
+// Listar tomas de paciente por rango de fechas
+app.get('/patients/:patientId/intakes', async (req: Request, res: Response) => {
+  const { patientId } = req.params;
+  const { from, to } = req.query as { from: string, to: string };
+  
+  try {
+    const user = await prisma.user.findUnique({ where: { id: patientId } });
+    if (!user) return res.status(404).json({ error: 'Patient not found' });
+
+    const intakes = await prisma.intakeLog.findMany({
+      where: {
+        medication: { patientId: patientId }, // Simplificamos la consulta
+        scheduledFor: {
+          gte: from ? new Date(from) : undefined,
+          lte: to ? new Date(to) : undefined
+        }
+      },
+      // Con 'include', le decimos a Prisma que también traiga la información del medicamento asociado.
+      include: {
+        medication: true 
+      },
+      orderBy: {
+        actionAt: 'desc' // Ordenamos por fecha de la acción descendente
       }
-    }
-  });
-  res.json(intakes);
+    });
+    res.json(intakes);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
 });
 
 

@@ -8,14 +8,14 @@ import * as db from '../services/database';
 interface AuthContextData {
   session: string | null;
   isLoading: boolean;
-  database: SQLiteDatabase | null; // <-- NUEVO: compartimos la BD
+  database: SQLiteDatabase | null;
   setSession: (session: string | null) => void;
 }
 
 const AuthContext = createContext<AuthContextData>({
   session: null,
   isLoading: true,
-  database: null, // <-- NUEVO
+  database: null,
   setSession: () => {},
 });
 
@@ -31,21 +31,24 @@ const storage = {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<string | null>(null);
-  const [database, setDatabase] = useState<SQLiteDatabase | null>(null); // <-- NUEVO
+  const [database, setDatabase] = useState<SQLiteDatabase | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        // Inicializamos la base de datos y la guardamos en el estado
         const dbConnection = await db.initializeDatabase();
         setDatabase(dbConnection);
 
-        // Cargamos el token de sesión
-        const token = await storage.getItem('session_token');
-        if (token) {
-          setSession(token);
-        }
+        // --- CAMBIO TEMPORAL PARA PRUEBAS ---
+        // Ignoramos el token guardado en el celular y forzamos el uso
+        // del ID de usuario real que obtuvimos del backend.
+        // Esto simula un inicio de sesión exitoso contra el servidor.
+        const backendUserId = 'cmg63icdz0000tescziesac32';
+        setSession(backendUserId);
+        console.log(`Sesión forzada para pruebas con el ID del backend: ${backendUserId}`);
+        // --- FIN DEL CAMBIO TEMPORAL ---
+
       } catch (e) {
         console.error("Failed to load data or database", e);
       } finally {

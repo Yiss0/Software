@@ -1,14 +1,19 @@
+// frontend/app/(tabs)/medicamentos.tsx
+
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link, useFocusEffect } from 'expo-router';
 import { Plus, Pill, Clock, Pencil, Trash2 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
-import * as db from '../../services/database';
-import * as NotificationService from '../../services/notificationService';
+// --- 1. CAMBIO EN LAS IMPORTACIONES ---
+// Cambiamos 'db' por nuestro servicio de API
+import * as apiService from '../../services/apiService';
 
-type MedicationListItem = db.Medication & { schedules: db.Schedule[] };
+// El tipo ahora viene de nuestro servicio de API
+type MedicationListItem = apiService.MedicationWithSchedules;
 
+// ... (Las funciones 'formatTimeToAMPM' y 'getFrequencyText' no cambian)
 const formatTimeToAMPM = (time: string) => {
     if (!/^\d{2}:\d{2}$/.test(time)) return time;
     const [hours, minutes] = time.split(':');
@@ -17,8 +22,7 @@ const formatTimeToAMPM = (time: string) => {
     const formattedHour = h % 12 === 0 ? 12 : h % 12;
     return `${String(formattedHour).padStart(2, '0')}:${minutes} ${suffix}`;
 };
-
-const getFrequencyText = (schedule: db.Schedule): string => {
+const getFrequencyText = (schedule: apiService.Schedule): string => {
   const formattedTime = formatTimeToAMPM(schedule.time);
   switch (schedule.frequencyType) {
       case 'DAILY': return `Cada día a las ${formattedTime}`;
@@ -46,6 +50,7 @@ const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListIte
           </View>
         </View>
         <View style={styles.actionButtons}>
+            {/* El ID del item ahora es un string, lo cual es compatible con los params */}
             <Link href={{ pathname: "/edit-medication", params: { medId: item.id } }} asChild>
                 <TouchableOpacity style={styles.editButton}><Pencil size={20} color="#3B82F6" /></TouchableOpacity>
             </Link>
@@ -57,14 +62,34 @@ const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListIte
 
 export default function MedicamentosScreen() {
   const [medicamentos, setMedicamentos] = useState<MedicationListItem[]>([]);
-  const { database, session } = useAuth();
+  // --- 2. AÑADIMOS ESTADO DE CARGA ---
+  const [isLoading, setIsLoading] = useState(true);
+  // Quitamos 'database', ya no se necesita aquí
+  const { session } = useAuth();
 
+  // --- 3. MODIFICAMOS LA FUNCIÓN DE CARGA ---
   const cargarMedicamentos = useCallback(async () => {
-    if (database && session) {
-      const meds = await db.getMedicationsWithSchedules(database, parseInt(session, 10));
-      setMedicamentos(meds);
+    if (!session) return;
+    setIsLoading(true);
+    try {
+      // Paso 1: Obtener los medicamentos base
+      const baseMeds = await apiService.fetchMedicationsByPatient(session);
+      
+      // Paso 2: Para cada medicamento, obtener sus horarios en paralelo
+      const medsWithSchedules = await Promise.all(
+        baseMeds.map(async (med) => {
+          const schedules = await apiService.fetchSchedulesForMedication(med.id);
+          return { ...med, schedules }; // Combinamos el medicamento con sus horarios
+        })
+      );
+      setMedicamentos(medsWithSchedules);
+    } catch (error) {
+      console.error("Error al cargar medicamentos desde la API:", error);
+      Alert.alert("Error", "No se pudieron obtener los medicamentos del servidor.");
+    } finally {
+      setIsLoading(false);
     }
-  }, [database, session]);
+  }, [session]);
 
   useFocusEffect(
     useCallback(() => {
@@ -72,25 +97,34 @@ export default function MedicamentosScreen() {
     }, [cargarMedicamentos])
   );
 
+  // --- 4. MODIFICAMOS LA FUNCIÓN DE BORRADO ---
   const handleDelete = async (med: MedicationListItem) => {
     Alert.alert( "Eliminar Medicamento", `¿Estás seguro de que quieres eliminar "${med.name}"?`,
         [
             { text: "Cancelar", style: "cancel" },
             { text: "Sí, Eliminar", style: "destructive", onPress: async () => {
-                if (database && session) {
-                    const success = await db.deleteMedication(database, med.id);
-                    if (success) {
-                        await NotificationService.rescheduleAllNotifications(database, parseInt(session));
-                        await cargarMedicamentos();
-                        Alert.alert("Éxito", "Medicamento eliminado.");
-                    } else {
-                        Alert.alert("Error", "No se pudo eliminar el medicamento.");
-                    }
+                const success = await apiService.deleteMedication(med.id);
+                if (success) {
+                    // La lógica de notificaciones se quita de aquí
+                    await cargarMedicamentos(); // Recargamos la lista desde el servidor
+                    Alert.alert("Éxito", "Medicamento eliminado.");
+                } else {
+                    Alert.alert("Error", "No se pudo eliminar el medicamento del servidor.");
                 }
             }}
         ]
     );
   };
+
+  // --- 5. RENDERIZADO CONDICIONAL CON CARGA ---
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}><Text style={styles.title}>Mis Medicamentos</Text></View>
+        <ActivityIndicator size="large" color="#2563EB" style={{ flex: 1 }} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -98,7 +132,7 @@ export default function MedicamentosScreen() {
       <FlatList
         data={medicamentos}
         renderItem={({ item }) => <MedicationItem item={item} onDelete={() => handleDelete(item)} />}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item) => item.id} // El ID ahora es un string
         contentContainerStyle={styles.listContainer}
         ListEmptyComponent={() => ( <View style={styles.emptyContainer}><Text style={styles.emptyText}>No tienes medicamentos registrados.</Text><Text style={styles.emptySubText}>Presiona el botón '+' para añadir el primero.</Text></View> )}
       />

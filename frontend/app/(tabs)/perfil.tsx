@@ -1,48 +1,70 @@
-// --- 1. IMPORTACIONES NUEVAS ---
-import { Link } from 'expo-router'; // Para la navegación
-import { Bell, Camera, CreditCard as Edit, Save, Settings, User, LogOut, DatabaseZap } from 'lucide-react-native'; // 'DatabaseZap' es un nuevo ícono
-// --- FIN DE IMPORTACIONES NUEVAS ---
-
+import { Link } from 'expo-router';
+import { Camera, CreditCard as Edit, Save, Settings, User, LogOut, DatabaseZap } from 'lucide-react-native';
 import React, { useState, useCallback } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import * as db from '../../services/database';
 import { useFocusEffect } from 'expo-router';
+import * as apiService from '../../services/apiService';
+
+// Un tipo local para el perfil, compatible con la API
+type UserProfileState = {
+  nombre: string;
+  apellido: string;
+  email: string | null;
+  telefono: string | null;
+  fechaNacimiento: string | null;
+  direccion: string | null;
+  contactoEmergencia: string | null;
+  telefonoEmergencia: string | null;
+  condicionesMedicas: string | null;
+  alergias: string | null;
+};
 
 export default function PerfilScreen() {
-  const { database, session, setSession } = useAuth();
+  const { session, setSession } = useAuth();
   const [editando, setEditando] = useState(false);
-  const [perfil, setPerfil] = useState<db.User | null>(null);
-  const [perfilTemporal, setPerfilTemporal] = useState<Partial<db.User> | null>(null);
+  const [perfil, setPerfil] = useState<UserProfileState | null>(null);
+  const [perfilTemporal, setPerfilTemporal] = useState<Partial<UserProfileState> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
       const cargarPerfil = async () => {
         setIsLoading(true);
-        if (database && session) {
-          const perfilData = await db.getUserById(database, parseInt(session, 10));
-          setPerfil(perfilData);
-          setPerfilTemporal(perfilData);
+        if (session) {
+          try {
+            const perfilData = await apiService.fetchUserProfile(session);
+            if (perfilData) {
+              // Adaptamos los nombres de la API a los que usa el formulario
+              const adaptedProfile: UserProfileState = {
+                nombre: perfilData.firstName,
+                apellido: perfilData.lastName,
+                email: perfilData.email,
+                telefono: perfilData.phone,
+                fechaNacimiento: perfilData.birthDate,
+                direccion: perfilData.address,
+                contactoEmergencia: perfilData.emergencyContact,
+                telefonoEmergencia: perfilData.emergencyPhone,
+                condicionesMedicas: perfilData.medicalConditions,
+                alergias: perfilData.allergies,
+              };
+              setPerfil(adaptedProfile);
+              setPerfilTemporal(adaptedProfile);
+            }
+          } catch (error) {
+            console.error("Error al cargar el perfil:", error);
+            Alert.alert("Error", "No se pudo cargar el perfil desde el servidor.");
+          }
         }
         setIsLoading(false);
       };
       cargarPerfil();
-    }, [database, session])
+    }, [session])
   );
 
   const guardarPerfil = async () => {
-    if (!database || !session || !perfilTemporal) return;
-
-    const success = await db.updateUserProfile(database, parseInt(session, 10), perfilTemporal);
-    if (success) {
-      setPerfil(perfilTemporal as db.User);
-      setEditando(false);
-      Alert.alert('Éxito', 'Perfil guardado correctamente');
-    } else {
-      Alert.alert('Error', 'No se pudo guardar el perfil');
-    }
+    Alert.alert("Función no conectada", "La edición de perfil se conectará en un próximo paso.");
   };
 
   const cancelarEdicion = () => {
@@ -50,7 +72,7 @@ export default function PerfilScreen() {
     setEditando(false);
   };
 
-  const actualizarCampo = (campo: keyof db.User, valor: string) => {
+  const actualizarCampo = (campo: keyof UserProfileState, valor: string) => {
     setPerfilTemporal(prev => (prev ? { ...prev, [campo]: valor } : null));
   };
 
@@ -67,9 +89,9 @@ export default function PerfilScreen() {
 
   if (isLoading || !perfilTemporal) {
     return (
-      <SafeAreaView style={styles.container}>
-        <ActivityIndicator size="large" color="#2563EB" style={{ flex: 1 }} />
-      </SafeAreaView>
+        <SafeAreaView style={styles.container}>
+            <ActivityIndicator size="large" color="#2563EB" style={{ flex: 1 }} />
+        </SafeAreaView>
     );
   }
 
@@ -158,15 +180,13 @@ export default function PerfilScreen() {
             <TextInput style={[styles.textInput, styles.textArea, !editando && styles.textInputDisabled]} value={perfilTemporal.alergias || ''} onChangeText={(text) => actualizarCampo('alergias', text)} multiline editable={editando} />
           </View>
         </View>
-
-        {/* --- 2. BOTÓN DE SINCRONIZACIÓN AÑADIDO --- */}
+        
         <Link href="/sync" asChild>
           <TouchableOpacity style={styles.syncButton}>
             <DatabaseZap size={20} color="#1D4ED8" />
             <Text style={styles.syncButtonText}>Sincronizar Datos con Servidor</Text>
           </TouchableOpacity>
         </Link>
-        {/* --- FIN DEL BOTÓN DE SINCRONIZACIÓN --- */}
         
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <LogOut size={20} color="#DC2626" />
@@ -201,10 +221,8 @@ const styles = StyleSheet.create({
   textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 12, padding: 16, fontSize: 16, color: '#1F2937', backgroundColor: '#FFFFFF' },
   textInputDisabled: { backgroundColor: '#F9FAFB', color: '#6B7280' },
   textArea: { height: 80, textAlignVertical: 'top' },
-  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, backgroundColor: '#FEE2E2', marginBottom: 20, gap: 8 }, // Ajustado marginBottom
+  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, backgroundColor: '#FEE2E2', marginBottom: 20, gap: 8 },
   logoutButtonText: { fontSize: 16, fontWeight: 'bold', color: '#DC2626' },
-  // --- 3. ESTILOS NUEVOS AÑADIDOS ---
   syncButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, borderRadius: 12, backgroundColor: '#DBEAFE', marginBottom: 20, gap: 8 },
   syncButtonText: { fontSize: 16, fontWeight: 'bold', color: '#1D4ED8' },
-  // --- FIN DE ESTILOS NUEVOS ---
 });
