@@ -1,25 +1,50 @@
 import { Calendar, CircleCheck as CheckCircle, Clock, Filter, CircleX as XCircle } from 'lucide-react-native';
 import React, { useState, useCallback } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View, FlatList, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, FlatList, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
-import * as db from '../../services/database';
+import * as apiService from '../../services/apiService';
+
+type HistorialItem = {
+  id: string;
+  medicamento: string;
+  dosis: string;
+  horaPlaneada: string;
+  horaTomada: string;
+  fecha: string;
+  estado: 'TAKEN' | 'SKIPPED' | 'POSTPONED';
+};
 
 export default function HistorialScreen() {
   const [filtroActivo, setFiltroActivo] = useState<'todos' | 'tomados' | 'omitidos'>('todos');
-  const [historial, setHistorial] = useState<db.IntakeLogWithName[]>([]);
+  const [historial, setHistorial] = useState<HistorialItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { database, session } = useAuth();
+  const { session } = useAuth();
 
   useFocusEffect(
     useCallback(() => {
       const cargarHistorial = async () => {
         setIsLoading(true);
-        if (database && session) {
+        if (session) {
           try {
-            const logs = await db.getIntakeLogsForUser(database, parseInt(session, 10));
-            setHistorial(logs);
+            const logsFromServer = await apiService.fetchIntakeHistory(session);
+            
+            // --- CAMBIO AQUÍ: Añadimos una comprobación ---
+            // Mapeamos los datos del servidor a la estructura que nuestra vista necesita
+            const formattedLogs: HistorialItem[] = logsFromServer
+              .filter(log => log.medication) // Filtramos cualquier log que no tenga un medicamento asociado
+              .map(log => ({
+                id: log.id,
+                // Usamos 'optional chaining' (?.) por si acaso
+                medicamento: log.medication?.name || 'Medicamento no encontrado',
+                dosis: log.medication?.dosage || '',
+                horaPlaneada: log.scheduledFor,
+                horaTomada: log.actionAt,
+                fecha: log.actionAt,
+                estado: log.action as 'TAKEN' | 'SKIPPED' | 'POSTPONED',
+            }));
+            setHistorial(formattedLogs);
           } catch (e) {
             console.error(e);
           }
@@ -27,7 +52,7 @@ export default function HistorialScreen() {
         setIsLoading(false);
       };
       cargarHistorial();
-    }, [database, session])
+    }, [session])
   );
 
   const historialFiltrado = historial.filter(item => {
@@ -64,39 +89,39 @@ export default function HistorialScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: db.IntakeLogWithName }) => (
+  const renderItem = ({ item }: { item: HistorialItem }) => (
      <View style={styles.historialCard}>
-        <View style={styles.historialHeader}>
-          <View style={styles.dateContainer}>
-            <Calendar size={20} color="#6B7280" />
-            <Text style={styles.dateText}>{new Date(item.fecha).toLocaleDateString('es-ES', { year: 'numeric', month: '2-digit', day: '2-digit' })}</Text>
-          </View>
-          <View style={styles.statusContainer}>
-            {getEstadoIcon(item.estado)}
-            <Text style={[styles.statusText, { color: getEstadoColor(item.estado) }]}>
-              {getEstadoTexto(item.estado)}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.medicationInfo}>
-          <Text style={styles.medicationName}>{item.medicamento}</Text>
-          <Text style={styles.medicationDose}>{item.dosis}</Text>
-          <View style={styles.timeInfo}>
-            <View style={styles.timeItem}>
-              <Clock size={16} color="#6B7280" />
-              <Text style={styles.timeLabel}>Planeado:</Text>
-              <Text style={styles.timeValue}>{new Date(item.horaPlaneada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-            </View>
-            {(item.estado === 'TAKEN' || item.estado === 'POSTPONED') && (
-              <View style={styles.timeItem}>
-                <CheckCircle size={16} color="#16A34A" />
-                <Text style={styles.timeLabel}>Acción:</Text>
-                <Text style={styles.timeValue}>{new Date(item.horaTomada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </View>
+       <View style={styles.historialHeader}>
+         <View style={styles.dateContainer}>
+           <Calendar size={20} color="#6B7280" />
+           <Text style={styles.dateText}>{new Date(item.fecha).toLocaleDateString('es-ES', { year: 'numeric', month: '2-digit', day: '2-digit' })}</Text>
+         </View>
+         <View style={styles.statusContainer}>
+           {getEstadoIcon(item.estado)}
+           <Text style={[styles.statusText, { color: getEstadoColor(item.estado) }]}>
+             {getEstadoTexto(item.estado)}
+           </Text>
+         </View>
+       </View>
+       <View style={styles.medicationInfo}>
+         <Text style={styles.medicationName}>{item.medicamento}</Text>
+         <Text style={styles.medicationDose}>{item.dosis}</Text>
+         <View style={styles.timeInfo}>
+           <View style={styles.timeItem}>
+             <Clock size={16} color="#6B7280" />
+             <Text style={styles.timeLabel}>Planeado:</Text>
+             <Text style={styles.timeValue}>{new Date(item.horaPlaneada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+           </View>
+           {(item.estado === 'TAKEN' || item.estado === 'POSTPONED') && (
+             <View style={styles.timeItem}>
+               <CheckCircle size={16} color="#16A34A" />
+               <Text style={styles.timeLabel}>Acción:</Text>
+               <Text style={styles.timeValue}>{new Date(item.horaTomada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+             </View>
+           )}
+         </View>
+       </View>
+     </View>
   );
 
   return (
