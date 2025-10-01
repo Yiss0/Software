@@ -1,37 +1,61 @@
 import * as Notifications from 'expo-notifications';
-import * as db from './database';
-import { SQLiteDatabase } from 'expo-sqlite';
-import * as MedicationLogic from './medicationLogic';
+import { Platform } from 'react-native';
+import * as apiService from './apiService'; // Importamos los tipos de la API
 
 /**
- * La ÚNICA función para gestionar las alarmas.
- * Cancela todo lo anterior, calcula la próxima dosis real y programa una única notificación para ella.
+ * Pide al usuario los permisos necesarios para enviar notificaciones.
+ * Debe llamarse al iniciar la aplicación.
  */
-export async function rescheduleAllNotifications(database: SQLiteDatabase, userId: number) {
-  // 1. Cancelamos todas las notificaciones pendientes para empezar de cero.
+export async function requestNotificationPermissions() {
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+  if (finalStatus !== 'granted') {
+    alert('¡Atención! No has permitido las notificaciones. La aplicación no podrá recordarte tus medicamentos.');
+    return;
+  }
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'default',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#FF231F7C',
+    });
+  }
+}
+
+/**
+ * Cancela todas las notificaciones y programa una única notificación para la próxima dosis.
+ * @param nextDose La próxima dosis obtenida del servidor.
+ */
+export async function scheduleNextDoseNotification(nextDose: apiService.NextDose | null) {
+  // 1. Cancelamos todo lo anterior para asegurar que solo haya una notificación programada.
   await Notifications.cancelAllScheduledNotificationsAsync();
 
-  // 2. Obtenemos los medicamentos y sus horarios de la BD.
-  const meds = await db.getMedicationsWithSchedules(database, userId);
-  
-  // 3. Usamos nuestra lógica inteligente para calcular la próxima dosis real.
-  const nextDose = await MedicationLogic.calculateNextDose(database, meds);
-
-  // 4. Si existe una próxima dosis, programamos una única notificación para ella.
+  // 2. Si existe una próxima dosis, la programamos.
   if (nextDose) {
-    const trigger = nextDose.triggerDate as any; // Usamos 'as any' para evitar el error de tipos
+    const trigger = new Date(nextDose.triggerDate);
     
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: '💊 Hora de tu medicamento',
-        body: `Es hora de tomar tu ${nextDose.medication.name} (${nextDose.medication.dosage}).`,
-        data: { medicationId: nextDose.medication.id },
-        sound: 'default',
-      },
-      trigger,
-    });
-    console.log(`Reprogramación completa. Próxima notificación: ${nextDose.triggerDate.toLocaleString()}`);
+    // Nos aseguramos de no programar una notificación en el pasado
+    if (trigger > new Date()) {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: '💊 Hora de tu medicamento',
+          body: `Es hora de tomar tu ${nextDose.medication.name} (${nextDose.medication.dosage}).`,
+          data: { medicationId: nextDose.medication.id },
+          sound: 'default',
+        },
+        trigger,
+      });
+      console.log(`[NotificationService] Notificación programada para: ${trigger.toLocaleString()}`);
+    } else {
+      console.log(`[NotificationService] No se programó la notificación porque la fecha ya pasó: ${trigger.toLocaleString()}`);
+    }
   } else {
-    console.log("Reprogramación completa. No hay próximas dosis para programar.");
+    console.log("[NotificationService] No hay próximas dosis para programar.");
   }
 }

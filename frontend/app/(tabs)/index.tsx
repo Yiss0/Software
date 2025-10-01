@@ -1,81 +1,114 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
-import * as db from '../../services/database';
-import * as MedicationLogic from '../../services/medicationLogic';
+import * as apiService from '../../services/apiService';
 import * as NotificationService from '../../services/notificationService';
-import * as Notifications from 'expo-notifications';
 import { Bell, CheckCircle, Clock } from 'lucide-react-native';
 
+type NextDoseState = Omit<apiService.NextDose, 'triggerDate'> & { triggerDate: Date };
+
 export default function HomeScreen() {
-  const { database, session } = useAuth();
-  const [nextDose, setNextDose] = useState<MedicationLogic.NextDose | null>(null);
+  const { session } = useAuth();
+  const [nextDose, setNextDose] = useState<NextDoseState | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadNextDoseAndSchedule = useCallback(async () => {
+  // Se ejecuta solo una vez cuando el componente se monta por primera vez.
+  useEffect(() => {
+    NotificationService.requestNotificationPermissions();
+  }, []);
+
+  const loadNextDoseFromServer = useCallback(async () => {
     setIsLoading(true);
     try {
-      if (database && session) {
-        // Esta función ahora calcula Y reprograma las notificaciones
-        await NotificationService.rescheduleAllNotifications(database, parseInt(session, 10));
-        // Después de reprogramar, volvemos a cargar la próxima dosis para la UI
-        const meds = await db.getMedicationsWithSchedules(database, parseInt(session, 10));
-        const next = await MedicationLogic.calculateNextDose(database, meds);
-        setNextDose(next);
+      if (session) {
+        const nextDoseFromServer = await apiService.fetchNextDose(session);
+        await NotificationService.scheduleNextDoseNotification(nextDoseFromServer);
+        if (nextDoseFromServer) {
+          setNextDose({
+            ...nextDoseFromServer,
+            triggerDate: new Date(nextDoseFromServer.triggerDate),
+          });
+        } else {
+          setNextDose(null);
+        }
       }
     } catch (error) {
-        console.error("Error crítico al cargar y programar la próxima dosis:", error);
+        console.error("Error al cargar y programar la próxima dosis:", error);
+        Alert.alert("Error de Red", "No se pudo obtener la información del servidor.");
     } finally {
         setIsLoading(false);
     }
-  }, [database, session]);
+  }, [session]);
 
-  useFocusEffect(useCallback(() => { loadNextDoseAndSchedule(); }, [loadNextDoseAndSchedule]));
+  useFocusEffect(useCallback(() => { loadNextDoseFromServer(); }, [loadNextDoseFromServer]));
 
   const handleMarkAsTaken = async () => {
-    if (!database || !nextDose || !session || isSubmitting) return;
+    console.log("--- INICIO DEPURACIÓN: handleMarkAsTaken ---");
+    console.log("1. Botón 'Ya lo tomé' presionado.");
+
+    if (!nextDose || !session || isSubmitting) {
+      console.log("2. La función se detuvo en la validación inicial.");
+      console.log(`- ¿Existe nextDose?: ${!!nextDose}`);
+      console.log(`- ¿Existe session?: ${!!session}`);
+      console.log(`- ¿Está enviando?: ${isSubmitting}`);
+      console.log("--- FIN DEPURACIÓN ---");
+      return;
+    }
+    
+    console.log("2. La validación inicial fue exitosa.");
     setIsSubmitting(true);
+
     try {
-        const log: Omit<db.IntakeLog, 'id'> = {
+        console.log("3. Intentando crear el payload para la API.");
+        const payload: apiService.NewIntakePayload = {
             medicationId: nextDose.medication.id,
+            scheduleId: nextDose.schedule.id,
             scheduledFor: nextDose.triggerDate.toISOString(),
             action: 'TAKEN',
             actionAt: new Date().toISOString(),
         };
-        const success = await db.logIntake(database, log);
+        console.log("4. Payload creado. Enviando a la API...", payload);
+        
+        const success = await apiService.logIntake(payload);
+        
+        console.log("5. La API respondió. ¿Éxito?", success);
+        
         if (success) {
             Alert.alert('¡Bien hecho!', 'Se ha registrado la toma.');
-            // Volvemos a cargar y reprogramar todo
-            await loadNextDoseAndSchedule();
+            await loadNextDoseFromServer();
         } else {
-            Alert.alert('Error', 'No se pudo registrar la toma.');
+            Alert.alert('Error', 'No se pudo registrar la toma en el servidor.');
         }
     } catch (error) {
-        console.error("Error en handleMarkAsTaken:", error);
+        console.error("ERROR: La llamada a la API falló dentro del bloque try-catch.", error);
+        Alert.alert('Error', 'Ocurrió un error al registrar la toma. Revisa la consola.');
     } finally {
         setIsSubmitting(false);
+        console.log("--- FIN DEPURACIÓN ---");
     }
   };
   
   const handlePostpone = async () => {
-    if (!database || !nextDose || !session || isSubmitting) return;
+    if (!nextDose || !session || isSubmitting) return;
     setIsSubmitting(true);
     try {
-        const log: Omit<db.IntakeLog, 'id'> = {
+      const payload: apiService.NewIntakePayload = {
             medicationId: nextDose.medication.id,
+            scheduleId: nextDose.schedule.id,
             scheduledFor: nextDose.triggerDate.toISOString(),
             action: 'POSTPONED',
             actionAt: new Date().toISOString(),
-        };
-        await db.logIntake(database, log);
-        
-        // Volvemos a cargar y reprogramar todo, la lógica ya considerará la posposición
-        await loadNextDoseAndSchedule();
-
-        Alert.alert('Recordatorio pospuesto', 'La próxima toma ha sido actualizada.');
+      };
+      const success = await apiService.logIntake(payload);
+        if (success) {
+          Alert.alert('Recordatorio pospuesto', 'La próxima toma ha sido actualizada.');
+            await loadNextDoseFromServer();
+        } else {
+            Alert.alert('Error', 'No se pudo registrar la acción.');
+        }
     } catch (error) {
         console.error("Error en handlePostpone:", error);
     } finally {
@@ -87,7 +120,7 @@ export default function HomeScreen() {
     return (
         <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#2563EB" />
-            <Text style={styles.loadingText}>Cargando tus medicamentos...</Text>
+            <Text style={styles.loadingText}>Buscando próximas dosis...</Text>
         </View>
     );
   }
@@ -122,9 +155,9 @@ export default function HomeScreen() {
                         <Text style={styles.actionButtonText}>Ya lo tomé</Text>
                     </TouchableOpacity>
                     <TouchableOpacity 
-                        style={[styles.postponeButton, isSubmitting && styles.buttonDisabled]}
+                        style={[styles.postponeButton, (isSubmitting || nextDose?.isPostponed) && styles.buttonDisabled]}
                         onPress={handlePostpone}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || nextDose?.isPostponed}
                     >
                         <Clock size={20} color="#374151" />
                         <Text style={styles.actionButtonTextDark}>Posponer</Text>
