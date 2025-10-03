@@ -21,8 +21,8 @@ model User {
   emergencyPhone      String?
   medicalConditions   String?
   allergies           String?
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
+ createdAt           DateTime     @default(now()) @db.Timestamptz
+  updatedAt           DateTime     @updatedAt @db.Timestamptz
   medications         Medication[]
 }
 
@@ -37,9 +37,9 @@ model Medication {
   instructions String?
   color        String?
   active       Boolean     @default(true)
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  deletedAt    DateTime?
+  createdAt           DateTime     @default(now()) @db.Timestamptz
+  updatedAt           DateTime     @updatedAt @db.Timestamptz
+  deletedAt           DateTime?    @db.Timestamptz
   schedules    Schedule[]
   intakes      IntakeLog[]
 }
@@ -54,8 +54,8 @@ model Schedule {
   daysOfWeek     String?
   endDate        String?
   active         Boolean    @default(true)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  createdAt           DateTime     @default(now()) @db.Timestamptz
+  updatedAt           DateTime     @updatedAt @db.Timestamptz
   intakes        IntakeLog[]
 }
 
@@ -65,9 +65,9 @@ model IntakeLog {
   medicationId String
   schedule     Schedule?  @relation(fields: [scheduleId], references: [id])
   scheduleId   String?
-  scheduledFor DateTime
+  scheduledFor        DateTime     @db.Timestamptz
   action       String
-  actionAt     DateTime
+  actionAt            DateTime     @db.Timestamptz
   note         String?
-  createdAt    DateTime   @default(now())
+  createdAt           DateTime     @default(now()) @db.Timestamptz
 }

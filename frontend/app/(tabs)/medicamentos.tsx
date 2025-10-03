@@ -15,12 +15,13 @@ type MedicationListItem = apiService.MedicationWithSchedules;
 
 // ... (Las funciones 'formatTimeToAMPM' y 'getFrequencyText' no cambian)
 const formatTimeToAMPM = (time: string) => {
-    if (!/^\d{2}:\d{2}$/.test(time)) return time;
-    const [hours, minutes] = time.split(':');
-    const h = parseInt(hours, 10);
-    const suffix = h >= 12 ? 'p. m.' : 'a. m.';
-    const formattedHour = h % 12 === 0 ? 12 : h % 12;
-    return `${String(formattedHour).padStart(2, '0')}:${minutes} ${suffix}`;
+  // La hora del horario (ej: "22:00") no tiene zona horaria, la mostramos tal cual.
+  if (!/^\d{2}:\d{2}$/.test(time)) return time;
+  const [hours, minutes] = time.split(':');
+  const h = parseInt(hours, 10);
+  const suffix = h >= 12 ? 'p. m.' : 'a. m.';
+  const formattedHour = h % 12 === 0 ? 12 : h % 12;
+  return `${String(formattedHour).padStart(2, '0')}:${minutes} ${suffix}`;
 };
 const getFrequencyText = (schedule: apiService.Schedule): string => {
   const formattedTime = formatTimeToAMPM(schedule.time);

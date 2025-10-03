@@ -30,13 +30,10 @@ export default function HistorialScreen() {
           try {
             const logsFromServer = await apiService.fetchIntakeHistory(session);
             
-            // --- CAMBIO AQUÍ: Añadimos una comprobación ---
-            // Mapeamos los datos del servidor a la estructura que nuestra vista necesita
             const formattedLogs: HistorialItem[] = logsFromServer
               .filter(log => log.medication) // Filtramos cualquier log que no tenga un medicamento asociado
               .map(log => ({
                 id: log.id,
-                // Usamos 'optional chaining' (?.) por si acaso
                 medicamento: log.medication?.name || 'Medicamento no encontrado',
                 dosis: log.medication?.dosage || '',
                 horaPlaneada: log.scheduledFor,
