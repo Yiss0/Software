@@ -1,30 +1,40 @@
-// frontend/app/(tabs)/medicamentos.tsx
-
 import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link, useFocusEffect } from 'expo-router';
 import { Plus, Pill, Clock, Pencil, Trash2 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
-// --- 1. CAMBIO EN LAS IMPORTACIONES ---
-// Cambiamos 'db' por nuestro servicio de API
 import * as apiService from '../../services/apiService';
 
-// El tipo ahora viene de nuestro servicio de API
 type MedicationListItem = apiService.MedicationWithSchedules;
 
-// ... (Las funciones 'formatTimeToAMPM' y 'getFrequencyText' no cambian)
-const formatTimeToAMPM = (time: string) => {
-  // La hora del horario (ej: "22:00") no tiene zona horaria, la mostramos tal cual.
-  if (!/^\d{2}:\d{2}$/.test(time)) return time;
-  const [hours, minutes] = time.split(':');
-  const h = parseInt(hours, 10);
-  const suffix = h >= 12 ? 'p. m.' : 'a. m.';
-  const formattedHour = h % 12 === 0 ? 12 : h % 12;
-  return `${String(formattedHour).padStart(2, '0')}:${minutes} ${suffix}`;
+/**
+ * Convierte una hora UTC (ej: "01:10") a la hora local del dispositivo (ej: "22:10")
+ */
+const convertUTCTimeToLocalString = (utcTime: string): string => {
+  if (!/^\d{2}:\d{2}$/.test(utcTime)) return utcTime;
+  const [hours, minutes] = utcTime.split(':').map(Number);
+  const date = new Date();
+  date.setUTCHours(hours, minutes, 0, 0);
+
+  const localHours = String(date.getHours()).padStart(2, '0');
+  const localMinutes = String(date.getMinutes()).padStart(2, '0');
+  
+  return `${localHours}:${localMinutes}`;
 };
+
+const formatTimeToAMPM = (time: string) => {
+    if (!/^\d{2}:\d{2}$/.test(time)) return time;
+    const [hours, minutes] = time.split(':');
+    const h = parseInt(hours, 10);
+    const suffix = h >= 12 ? 'p. m.' : 'a. m.';
+    const formattedHour = h % 12 === 0 ? 12 : h % 12;
+    return `${String(formattedHour).padStart(2, '0')}:${minutes} ${suffix}`;
+};
+
 const getFrequencyText = (schedule: apiService.Schedule): string => {
-  const formattedTime = formatTimeToAMPM(schedule.time);
+  const localTime = convertUTCTimeToLocalString(schedule.time);
+  const formattedTime = formatTimeToAMPM(localTime);
   switch (schedule.frequencyType) {
       case 'DAILY': return `Cada día a las ${formattedTime}`;
       case 'HOURLY': return `Cada ${schedule.frequencyValue} horas (desde ${formattedTime})`;
@@ -42,7 +52,7 @@ const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListIte
             <Text style={styles.medName}>{item.name}</Text>
             <Text style={styles.medDosage}>{item.dosage} - Quedan: {item.quantity}</Text>
             {item.instructions ? <Text style={styles.medInstructions}>Instrucciones: {item.instructions}</Text> : null}
-            {item.schedules.map(schedule => (
+            {item.schedules.map((schedule: apiService.Schedule) => (
                 <View key={schedule.id} style={styles.schedulesContainer}>
                     <Clock size={16} color="#6B7280" style={{ marginRight: 5 }} />
                     <Text style={styles.scheduleText}>{getFrequencyText(schedule)}</Text>
@@ -51,7 +61,6 @@ const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListIte
           </View>
         </View>
         <View style={styles.actionButtons}>
-            {/* El ID del item ahora es un string, lo cual es compatible con los params */}
             <Link href={{ pathname: "/edit-medication", params: { medId: item.id } }} asChild>
                 <TouchableOpacity style={styles.editButton}><Pencil size={20} color="#3B82F6" /></TouchableOpacity>
             </Link>
@@ -63,24 +72,19 @@ const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListIte
 
 export default function MedicamentosScreen() {
   const [medicamentos, setMedicamentos] = useState<MedicationListItem[]>([]);
-  // --- 2. AÑADIMOS ESTADO DE CARGA ---
   const [isLoading, setIsLoading] = useState(true);
-  // Quitamos 'database', ya no se necesita aquí
   const { session } = useAuth();
 
-  // --- 3. MODIFICAMOS LA FUNCIÓN DE CARGA ---
   const cargarMedicamentos = useCallback(async () => {
     if (!session) return;
     setIsLoading(true);
     try {
-      // Paso 1: Obtener los medicamentos base
       const baseMeds = await apiService.fetchMedicationsByPatient(session);
       
-      // Paso 2: Para cada medicamento, obtener sus horarios en paralelo
       const medsWithSchedules = await Promise.all(
         baseMeds.map(async (med) => {
           const schedules = await apiService.fetchSchedulesForMedication(med.id);
-          return { ...med, schedules }; // Combinamos el medicamento con sus horarios
+          return { ...med, schedules };
         })
       );
       setMedicamentos(medsWithSchedules);
@@ -98,7 +102,6 @@ export default function MedicamentosScreen() {
     }, [cargarMedicamentos])
   );
 
-  // --- 4. MODIFICAMOS LA FUNCIÓN DE BORRADO ---
   const handleDelete = async (med: MedicationListItem) => {
     Alert.alert( "Eliminar Medicamento", `¿Estás seguro de que quieres eliminar "${med.name}"?`,
         [
@@ -106,8 +109,7 @@ export default function MedicamentosScreen() {
             { text: "Sí, Eliminar", style: "destructive", onPress: async () => {
                 const success = await apiService.deleteMedication(med.id);
                 if (success) {
-                    // La lógica de notificaciones se quita de aquí
-                    await cargarMedicamentos(); // Recargamos la lista desde el servidor
+                    await cargarMedicamentos();
                     Alert.alert("Éxito", "Medicamento eliminado.");
                 } else {
                     Alert.alert("Error", "No se pudo eliminar el medicamento del servidor.");
@@ -117,7 +119,6 @@ export default function MedicamentosScreen() {
     );
   };
 
-  // --- 5. RENDERIZADO CONDICIONAL CON CARGA ---
   if (isLoading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -133,7 +134,7 @@ export default function MedicamentosScreen() {
       <FlatList
         data={medicamentos}
         renderItem={({ item }) => <MedicationItem item={item} onDelete={() => handleDelete(item)} />}
-        keyExtractor={(item) => item.id} // El ID ahora es un string
+        keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContainer}
         ListEmptyComponent={() => ( <View style={styles.emptyContainer}><Text style={styles.emptyText}>No tienes medicamentos registrados.</Text><Text style={styles.emptySubText}>Presiona el botón '+' para añadir el primero.</Text></View> )}
       />

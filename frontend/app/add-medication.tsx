@@ -1,18 +1,27 @@
-// frontend/app/add-medication.tsx
-
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, FlatList, Keyboard, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
-// --- 1. CAMBIO EN LAS IMPORTACIONES ---
-// Quitamos la importación a la base de datos local y a las notificaciones
-// e importamos nuestro nuevo servicio de API.
 import * as apiService from '../services/apiService';
 import { Clock, Plus, Trash2 } from 'lucide-react-native';
 
-// El tipo local es compatible con el payload de la API, así que lo mantenemos.
 type ScheduleInput = apiService.NewSchedulePayload;
+
+/**
+ * Convierte una hora local (ej: "22:10") a su equivalente en UTC (ej: "01:10" del día siguiente)
+ */
+const convertLocalTimeToUTCString = (localTime: string): string => {
+  if (!/^\d{2}:\d{2}$/.test(localTime)) return localTime;
+  const [hours, minutes] = localTime.split(':').map(Number);
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0); // Crea una fecha con la hora local de hoy
+
+  const utcHours = String(date.getUTCHours()).padStart(2, '0');
+  const utcMinutes = String(date.getUTCMinutes()).padStart(2, '0');
+  
+  return `${utcHours}:${utcMinutes}`;
+};
 
 const formatTimeToAMPM = (time: string) => {
     if (!/^\d{2}:\d{2}$/.test(time)) return time;
@@ -24,7 +33,6 @@ const formatTimeToAMPM = (time: string) => {
 };
 
 export default function AddMedicationScreen() {
-  // El 'database' ya no es necesario aquí, solo el 'session' (userId)
   const { session } = useAuth();
   const [name, setName] = useState('');
   const [dosage, setDosage] = useState('');
@@ -39,7 +47,6 @@ export default function AddMedicationScreen() {
   });
   const [selectedDays, setSelectedDays] = useState<Set<number>>(new Set());
 
-  // ... (El resto de las funciones como handleTimeChange, handleAddTime, etc., no cambian) ...
   const handleTimeChange = (text: string) => {
     const cleaned = text.replace(/[^0-9]/g, '');
     let formatted = cleaned;
@@ -48,37 +55,48 @@ export default function AddMedicationScreen() {
     }
     setScheduleInput(prev => ({ ...prev, time: formatted.slice(0, 5) }));
   };
+
   const handleAddTime = () => {
     const time = scheduleInput.time || '';
     const [hours, minutes] = time.split(':').map(Number);
+
     if (!/^\d{2}:\d{2}$/.test(time) || hours > 23 || minutes > 59) {
       Alert.alert('Hora incorrecta', 'Por favor, ingrese una hora válida en formato HH:MM (ej: 08:00 o 14:30).');
       return;
     }
-    if (schedules.some(s => s.time === time)) {
+    
+    // Convertimos la hora local a UTC para guardarla
+    const utcTime = convertLocalTimeToUTCString(time);
+
+    if (schedules.some(s => s.time === utcTime)) {
       Alert.alert('Hora duplicada', 'Este horario ya ha sido añadido.');
       return;
     }
-    const newSchedule: ScheduleInput = { time: scheduleInput.time!, frequencyType: scheduleInput.frequencyType!, frequencyValue: scheduleInput.frequencyType === 'HOURLY' ? scheduleInput.frequencyValue! : 1, daysOfWeek: scheduleInput.frequencyType === 'WEEKLY' ? Array.from(selectedDays).join(',') : undefined, };
+
+    const newSchedule: ScheduleInput = { 
+        time: utcTime, // Guardamos la hora en UTC
+        frequencyType: scheduleInput.frequencyType!, 
+        frequencyValue: scheduleInput.frequencyType === 'HOURLY' ? scheduleInput.frequencyValue! : 1, 
+        daysOfWeek: scheduleInput.frequencyType === 'WEEKLY' ? Array.from(selectedDays).join(',') : undefined, 
+    };
+    
     setSchedules([...schedules, newSchedule].sort((a, b) => a.time.localeCompare(b.time)));
     setScheduleInput({ time: '', frequencyType: 'DAILY', frequencyValue: 1 });
     setSelectedDays(new Set());
     Keyboard.dismiss();
   };
+
   const handleRemoveSchedule = (index: number) => {
     setSchedules(schedules.filter((_, i) => i !== index));
   };
-  
-  // --- 2. CAMBIO PRINCIPAL EN handleSave ---
+
   const handleSave = async () => {
     if (!name || !dosage || !quantity) { Alert.alert('Campos incompletos', 'Por favor, complete nombre, dosis y cantidad.'); return; }
     if (schedules.length === 0) { Alert.alert('Sin horarios', 'Por favor, añada al menos un horario.'); return; }
-    // Ahora solo verificamos la sesión del usuario.
     if (!session) { Alert.alert('Error', 'No se ha encontrado la sesión del usuario.'); return; }
     
     setLoading(true);
     try {
-      // Creamos el 'payload' (los datos a enviar) para el medicamento.
       const newMedPayload: apiService.NewMedicationPayload = { 
         name, 
         dosage, 
@@ -86,13 +104,9 @@ export default function AddMedicationScreen() {
         instructions 
       };
 
-      // Llamamos a nuestra nueva función del servicio de API.
       const newMed = await apiService.addMedication(session, newMedPayload, schedules);
 
       if (newMed && newMed.id) {
-        // La lógica de notificaciones ahora debería manejarse de forma diferente,
-        // posiblemente desde el servidor o al recargar los datos en la pantalla principal.
-        // Por ahora, simplemente mostramos el éxito.
         Alert.alert('Éxito', 'Medicamento guardado en el servidor.');
         router.back();
       } else {
@@ -115,11 +129,13 @@ export default function AddMedicationScreen() {
         default: return '';
     }
   }
+
   const toggleDay = (dayIndex: number) => {
     const newDays = new Set(selectedDays);
     if (newDays.has(dayIndex)) { newDays.delete(dayIndex); } else { newDays.add(dayIndex); }
     setSelectedDays(newDays);
   };
+
   const weekDays = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
 
   return (
@@ -131,16 +147,16 @@ export default function AddMedicationScreen() {
 
         <View style={styles.form}>
             <Text style={styles.inputLabel}>Nombre del Medicamento *</Text>
-            <TextInput style={styles.textInput} value={name} onChangeText={setName} placeholder="Ej: Aspirina" />
+            <TextInput style={styles.textInput} value={name} onChangeText={setName} placeholder="Ej: Paracetamol" />
 
             <Text style={styles.inputLabel}>Dosis *</Text>
-            <TextInput style={styles.textInput} value={dosage} onChangeText={setDosage} placeholder="Ej: 100mg" />
+            <TextInput style={styles.textInput} value={dosage} onChangeText={setDosage} placeholder="Ej: 500mg" />
 
             <Text style={styles.inputLabel}>Cantidad de Pastillas *</Text>
             <TextInput style={styles.textInput} value={quantity} onChangeText={setQuantity} placeholder="Ej: 30" keyboardType="numeric" />
 
             <Text style={styles.inputLabel}>Instrucciones (Opcional)</Text>
-            <TextInput style={[styles.textInput, styles.textArea]} value={instructions} onChangeText={setInstructions} placeholder="Ej: Tomar con alimentos..." multiline />
+            <TextInput style={[styles.textInput, styles.textArea]} value={instructions} onChangeText={setInstructions} placeholder="Ej: Tomar con comida..." multiline />
             
             <Text style={styles.sectionTitle}>Horarios y Frecuencia</Text>
             
