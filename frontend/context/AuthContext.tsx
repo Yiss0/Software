@@ -40,15 +40,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const dbConnection = await db.initializeDatabase();
         setDatabase(dbConnection);
 
-        // --- CAMBIO TEMPORAL PARA PRUEBAS ---
-        // Ignoramos el token guardado en el celular y forzamos el uso
-        // del ID de usuario real que obtuvimos del backend.
-        // Esto simula un inicio de sesión exitoso contra el servidor.
-        const backendUserId = 'cmg63icdz0000tescziesac32';
-        setSession(backendUserId);
-        console.log(`Sesión forzada para pruebas con el ID del backend: ${backendUserId}`);
-        // --- FIN DEL CAMBIO TEMPORAL ---
-
+        // Volvemos a la lógica original para cargar el token de sesión real
+        const token = await storage.getItem('session_token');
+        if (token) {
+          setSession(token);
+        }
       } catch (e) {
         console.error("Failed to load data or database", e);
       } finally {

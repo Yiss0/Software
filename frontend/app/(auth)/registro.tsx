@@ -3,11 +3,9 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { User, Mail, Lock, Phone, Calendar, Eye, EyeOff, Pill, ArrowLeft } from 'lucide-react-native';
-import * as db from '../../services/database';
-import { useAuth } from '../../context/AuthContext';
+import * as apiService from '../../services/apiService';
 
 export default function RegistroScreen() {
-  const { database } = useAuth();
   const [formData, setFormData] = useState({
     nombre: '',
     apellido: '',
@@ -65,33 +63,31 @@ export default function RegistroScreen() {
 
   const handleRegister = async () => {
     if (!validateForm()) return;
-    if (!database) {
-      Alert.alert('Error', 'La base de datos no está lista, por favor intente de nuevo.');
-      return;
-    }
     setLoading(true);
     try {
-      const newUser = {
-        nombre: formData.nombre,
-        apellido: formData.apellido,
+      const payload: apiService.UserRegistrationPayload = {
+        firstName: formData.nombre,
+        lastName: formData.apellido,
         email: formData.email.toLowerCase().trim(),
-        telefono: `+569${formData.telefono.replace(/\s/g, '')}`, // Guardamos el número completo
-        fechaNacimiento: formData.fechaNacimiento,
-        password_plaintext: formData.password,
+        phone: `+569${formData.telefono.replace(/\s/g, '')}`,
+        birthDate: formData.fechaNacimiento,
+        password: formData.password,
       };
-      const newUserId = await db.createUser(database, newUser);
-      if (newUserId) {
+
+      const newUser = await apiService.registerUser(payload);
+      
+      if (newUser && newUser.id) {
         Alert.alert(
           'Registro exitoso',
           'Su cuenta ha sido creada correctamente. Ahora inicie sesión.',
           [{ text: 'Ir a Login', onPress: () => router.replace('/(auth)/login') }]
         );
       } else {
-        Alert.alert('Error de registro', 'No se pudo crear la cuenta. Es posible que el correo electrónico ya esté en uso.');
+        Alert.alert('Error de registro', 'No se pudo crear la cuenta.');
       }
     } catch (error) {
       console.error(error);
-      Alert.alert('Error', 'Ocurrió un error inesperado durante el registro.');
+      Alert.alert('Error', 'No se pudo crear la cuenta. Es posible que el correo ya esté en uso.');
     } finally {
       setLoading(false);
     }
@@ -182,7 +178,6 @@ export default function RegistroScreen() {
             <Text style={styles.registerButtonText}>{loading ? 'Creando cuenta...' : 'Crear mi cuenta'}</Text>
           </TouchableOpacity>
           
-          {/* INICIO DE LA CORRECCIÓN */}
           <View style={styles.loginContainer}>
             <Text style={styles.loginText}>
               ¿Ya tiene una cuenta?{' '}
@@ -191,8 +186,6 @@ export default function RegistroScreen() {
               </Text>
             </Text>
           </View>
-          {/* FIN DE LA CORRECCIÓN */}
-
         </View>
 
         <View style={styles.privacyContainer}>
@@ -208,7 +201,7 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1, },
   scrollContent: { flexGrow: 1, paddingHorizontal: 24, paddingVertical: 32, },
   header: { alignItems: 'center', marginBottom: 32, position: 'relative', },
-  backButton: { position: 'absolute', left: 0, top: 0, width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1,   shadowRadius: 4,  elevation: 4, },
+  backButton: { position: 'absolute', left: 0, top: 0, width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1,  shadowRadius: 4,  elevation: 4, },
   logoContainer: {  width: 80,  height: 80,   borderRadius: 40,   backgroundColor: '#EBF4FF',   alignItems: 'center',   justifyContent: 'center',   marginBottom: 20,   marginTop: 20, },
   title: {   fontSize: 32,   fontWeight: '700',  color: '#1F2937',   marginBottom: 8, },
   subtitle: {   fontSize: 18,   color: '#6B7280',   textAlign: 'center', },

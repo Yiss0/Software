@@ -70,6 +70,16 @@ export interface UserProfile {
 }
 
 
+export interface UserRegistrationPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  birthDate?: string;
+  password?: string; // Ahora es requerido
+}
+
+
 // --- FUNCIONES DEL SERVICIO ---
 
 export const fetchMedicationsByPatient = async (patientId: string): Promise<Medication[]> => {
@@ -215,6 +225,43 @@ export const fetchUserProfile = async (userId: string): Promise<UserProfile | nu
     return await response.json();
   } catch (error) {
     console.error('Error en fetchUserProfile:', error);
+    throw error;
+  }
+};
+
+export const registerUser = async (payload: UserRegistrationPayload): Promise<UserProfile> => {
+  const requestUrl = `${API_URL}/patients`;
+  try {
+    const response = await fetch(requestUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'No se pudo registrar el usuario.');
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error en registerUser:', error);
+    throw error;
+  }
+};
+
+export const loginUser = async (email: string, password: string): Promise<UserProfile | null> => {
+  const requestUrl = `${API_URL}/login`;
+  try {
+    const response = await fetch(requestUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }) // Enviamos también la contraseña
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error en loginUser:', error);
     throw error;
   }
 };

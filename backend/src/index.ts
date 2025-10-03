@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { PrismaClient, Medication, Schedule, IntakeLog } from '@prisma/client';
+import bcrypt from 'bcrypt';
 
 const app = express();
 app.use(cors());
@@ -9,6 +10,37 @@ const prisma = new PrismaClient();
 app.use(express.json());
 
 // --- LÓGICA DE CÁLCULO (TRADUCIDA DE TU MEDICATIONLOGIC.TS) ---
+
+// --- 2. ENDPOINT DE LOGIN MODIFICADO ---
+app.post('/login', async (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required' });
+  }
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase().trim() }
+    });
+    
+    // Si no encontramos al usuario O la contraseña no coincide, damos el mismo error genérico
+    if (!user || !user.password) {
+      return res.status(404).json({ error: 'Invalid credentials' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(404).json({ error: 'Invalid credentials' });
+    }
+
+    // No devolvemos el hash de la contraseña al cliente por seguridad
+    const { password: _, ...userWithoutPassword } = user;
+    res.json(userWithoutPassword);
+
+  } catch (error) {
+    res.status(500).json({ error: 'An unexpected error occurred.' });
+  }
+});
 
 /**
  * Calcula la fecha y hora de la próxima toma para una regla de horario individual.
@@ -153,15 +185,29 @@ app.get('/health', (req: Request, res: Response) => {
 
 // Crear paciente
 app.post('/patients', async (req: Request, res: Response) => {
-  const { firstName, lastName, email, phone } = req.body;
-  if (!firstName || !lastName) return res.status(400).json({ error: 'First name and last name are required' });
+  const { firstName, lastName, email, phone, password } = req.body;
+  if (!firstName || !lastName || !email || !password) {
+    return res.status(400).json({ error: 'Required fields are missing' });
+  }
   try {
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
     const user = await prisma.user.create({
-      data: { firstName, lastName, email, phone, role: 'PATIENT' }
+      data: { 
+        firstName, 
+        lastName, 
+        email: email.toLowerCase().trim(), 
+        phone, 
+        password: passwordHash, // Guardamos el hash, no la contraseña original
+        role: 'PATIENT' 
+      }
     });
-    res.status(201).json(user);
+
+    const { password: _, ...userWithoutPassword } = user;
+    res.status(201).json(userWithoutPassword);
+
   } catch (err) {
-    // 3. Manejamos el error 'unknown' de forma segura
     res.status(400).json({ error: (err as Error).message });
   }
 });
