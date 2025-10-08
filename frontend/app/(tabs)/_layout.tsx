@@ -1,8 +1,12 @@
 import { Tabs } from 'expo-router';
 import { History, Home, MessageCircle, Pill, User, Users } from 'lucide-react-native';
 import React from 'react';
+import { useAuth } from '../../context/AuthContext';
 
 export default function TabLayout() {
+  const { userType } = useAuth();
+  const isCuidador = userType === 'cuidador';
+
   return (
     <Tabs
       screenOptions={{
@@ -26,20 +30,24 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Home size={28} color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="medicamentos"
-        options={{
-          title: 'Medicamentos',
-          tabBarIcon: ({ color }) => <Pill size={28} color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="familiares"
-        options={{
-          title: 'Familiares',
-          tabBarIcon: ({ color }) => <Users size={28} color={color} />,
-        }}
-      />
+      {!isCuidador && (
+        <Tabs.Screen
+          name="medicamentos"
+          options={{
+            title: 'Medicamentos',
+            tabBarIcon: ({ color }) => <Pill size={28} color={color} />,
+          }}
+        />
+      )}
+      {!isCuidador && (
+        <Tabs.Screen
+          name="familiares"
+          options={{
+            title: 'Familiares',
+            tabBarIcon: ({ color }) => <Users size={28} color={color} />,
+          }}
+        />
+      )}
       <Tabs.Screen
         name="historial"
         options={{
@@ -47,13 +55,15 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <History size={28} color={color} />,
         }}
       />
-      <Tabs.Screen
-        name="asistente"
-        options={{
-          title: 'Asistente',
-          tabBarIcon: ({ color }) => <MessageCircle size={28} color={color} />,
-        }}
-      />
+      {!isCuidador && (
+        <Tabs.Screen
+          name="asistente"
+          options={{
+            title: 'Asistente',
+            tabBarIcon: ({ color }) => <MessageCircle size={28} color={color} />,
+          }}
+        />
+      )}
       <Tabs.Screen
         name="perfil"
         options={{

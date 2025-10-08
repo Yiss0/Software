@@ -7,13 +7,15 @@ import * as db from '../services/database';
 
 interface AuthContextData {
   session: string | null;
+  userType: 'usuario' | 'cuidador' | null;
   isLoading: boolean;
   database: SQLiteDatabase | null;
-  setSession: (session: string | null) => void;
+  setSession: (session: string | null, type?: 'usuario' | 'cuidador') => void;
 }
 
 const AuthContext = createContext<AuthContextData>({
   session: null,
+  userType: null,
   isLoading: true,
   database: null,
   setSession: () => {},
@@ -31,6 +33,7 @@ const storage = {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<string | null>(null);
+  const [userType, setUserType] = useState<'usuario' | 'cuidador' | null>(null);
   const [database, setDatabase] = useState<SQLiteDatabase | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -40,14 +43,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const dbConnection = await db.initializeDatabase();
         setDatabase(dbConnection);
 
-        // --- CAMBIO TEMPORAL PARA PRUEBAS ---
-        // Ignoramos el token guardado en el celular y forzamos el uso
-        // del ID de usuario real que obtuvimos del backend.
-        // Esto simula un inicio de sesión exitoso contra el servidor.
-        const backendUserId = 'cmg63icdz0000tescziesac32';
-        setSession(backendUserId);
-        console.log(`Sesión forzada para pruebas con el ID del backend: ${backendUserId}`);
-        // --- FIN DEL CAMBIO TEMPORAL ---
+        // Cargar sesión y tipo de usuario almacenados
+        const storedSession = await storage.getItem('session_token');
+        const storedUserType = await storage.getItem('user_type') as 'usuario' | 'cuidador' | null;
+        
+        if (storedSession) {
+          setSession(storedSession);
+          setUserType(storedUserType || 'usuario');
+        }
 
       } catch (e) {
         console.error("Failed to load data or database", e);
@@ -58,17 +61,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadData();
   }, []);
 
-  const handleSetSession = async (token: string | null) => {
+  const handleSetSession = async (token: string | null, type: 'usuario' | 'cuidador' = 'usuario') => {
     setSession(token);
+    setUserType(type);
     if (token) {
       await storage.setItem('session_token', token);
+      await storage.setItem('user_type', type);
     } else {
       await storage.deleteItem('session_token');
+      await storage.deleteItem('user_type');
     }
   };
 
   return (
-    <AuthContext.Provider value={{ session, isLoading, database, setSession: handleSetSession }}>
+    <AuthContext.Provider value={{ session, userType, isLoading, database, setSession: handleSetSession }}>
       {children}
     </AuthContext.Provider>
   );

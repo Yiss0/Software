@@ -38,7 +38,8 @@ export default function LoginScreen() {
       const isPasswordCorrect = await db.verifyPassword(password, userFound.password_hash);
 
       if (isPasswordCorrect) {
-        setSession(String(userFound.id)); 
+        // Establecer sesión como usuario normal
+        setSession(String(userFound.id), 'usuario'); 
       } else {
         Alert.alert('Error', 'El correo electrónico o la contraseña son incorrectos.');
       }
@@ -50,7 +51,7 @@ export default function LoginScreen() {
     }
   };
 
-  return (
+  return (
     // ... El JSX de esta pantalla no cambia ...
     <SafeAreaView style={styles.container}>
         <ScrollView 
@@ -132,7 +133,7 @@ export default function LoginScreen() {
             </View>
         </ScrollView>
     </SafeAreaView>
-  );
+  );
 }
 // ... Los estilos de esta pantalla no cambian ...
 const styles = StyleSheet.create({
