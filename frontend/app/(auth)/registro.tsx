@@ -3,8 +3,23 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { User, Mail, Lock, Phone, Calendar, Eye, EyeOff, Pill, ArrowLeft } from 'lucide-react-native';
-import * as apiService from '../../services/apiService';
+import * as db from '../../services/database';
+import { useAuth } from '../../context/AuthContext';
 
+/**
+ * PANTALLA DE REGISTRO DE NUEVOS USUARIOS
+ * 
+ * Formulario completo para crear nuevas cuentas de usuario.
+ * 
+ * Funcionalidades:
+ * - Registro con datos completos (nombre, apellido, email, teléfono, fecha nacimiento)
+ * - Validación de contraseñas
+ * - Creación de usuario en base de datos
+ * - Formateo automático de teléfono y fecha
+ * 
+ * Viene desde: login-form.tsx (enlace "¿No tienes cuenta?")
+ * Va hacia: login-form.tsx tras registro exitoso
+ */
 export default function RegistroScreen() {
   const [formData, setFormData] = useState({
     nombre: '',
@@ -80,7 +95,7 @@ export default function RegistroScreen() {
         Alert.alert(
           'Registro exitoso',
           'Su cuenta ha sido creada correctamente. Ahora inicie sesión.',
-          [{ text: 'Ir a Login', onPress: () => router.replace('/(auth)/login') }]
+          [{ text: 'Ir a Login', onPress: () => router.replace('/(auth)/login-form') }]
         );
       } else {
         Alert.alert('Error de registro', 'No se pudo crear la cuenta.');
@@ -181,11 +196,12 @@ export default function RegistroScreen() {
           <View style={styles.loginContainer}>
             <Text style={styles.loginText}>
               ¿Ya tiene una cuenta?{' '}
-              <Text style={styles.loginLinkText} onPress={() => router.push('/(auth)/login')}>
+              <Text style={styles.loginLinkText} onPress={() => router.push('/(auth)/login-form')}>
                 Iniciar sesión
               </Text>
             </Text>
           </View>
+
         </View>
 
         <View style={styles.privacyContainer}>

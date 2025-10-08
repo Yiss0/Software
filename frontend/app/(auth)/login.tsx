@@ -117,6 +117,7 @@ export default function LoginScreen() {
         </ScrollView>
     </SafeAreaView>
   );
+  );
 }
 
 const styles = StyleSheet.create({

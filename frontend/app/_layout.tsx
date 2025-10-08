@@ -13,8 +13,8 @@ function RootLayoutNav() {
       // If the user is logged in, go to the main app tabs
       router.replace('/(tabs)');
     } else {
-      // If the user is not logged in, go to the login screen
-      router.replace('/(auth)/login');
+      // If the user is not logged in, show the user type selection screen
+      router.replace('/(auth)');
     }
   }, [session, isLoading]);
   
@@ -32,6 +32,10 @@ function RootLayoutNav() {
     <Stack>
       <Stack.Screen name="(auth)" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="add-medication" options={{ headerShown: false }} />
+      <Stack.Screen name="edit-medication" options={{ headerShown: false }} />
+      <Stack.Screen name="modal" options={{ headerShown: false }} />
+      <Stack.Screen name="sync" options={{ headerShown: false }} />
     </Stack>
   );
 }
