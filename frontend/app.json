@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "PastillApp",
+    "slug": "PastillApp",
+    "version": "0.3.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "web": {
+      "favicon": "./assets/images/favicon.png" 
+    },
+    "experiments": {
+      "typedRoutes": false
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-barcode-scanner",
+        {
+          "cameraPermission": "Permitir a PastillApp usar la cámara."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "1.9.20"
+          }
+        }
+      ]
+    ],
+    "icon": "./assets/images/icon.png",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.yiss0.PastillApp",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a5488675-c88f-4bcd-9fa3-460a6879d86d"
+      }
+    }
+  }
+}
