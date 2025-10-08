@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String   @id @default(cuid())
+  firstName         String
+  lastName          String
+  email             String?  @unique
+  phone             String?
+  role              String   @default("PATIENT") // "PATIENT" | "CAREGIVER"
+  password          String?
+  birthDate         String?
+  address           String?
+  emergencyContact  String?
+  emergencyPhone    String?
+  medicalConditions String?
+  allergies         String?
+  createdAt         DateTime @default(now()) @db.Timestamptz
+  updatedAt         DateTime @updatedAt @db.Timestamptz
+
+  medications Medication[]
+
+  // Relaciones M:N Paciente <-> Cuidador
+  patientLinks   PatientCaregiver[] @relation("PC_Patient")
+  caregiverLinks PatientCaregiver[] @relation("PC_Caregiver")
+}
+
+model Medication {
+  id           String    @id @default(cuid())
+  patient      User      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patientId    String
+  name         String
+  dosage       String?
+  quantity     Int?
+  presentation String?
+  instructions String?
+  color        String?
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now()) @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @db.Timestamptz
+  deletedAt    DateTime? @db.Timestamptz
+
+  schedules Schedule[]
+  intakes   IntakeLog[]
+
+  @@index([patientId])
+}
+
+model Schedule {
+  id             String     @id @default(cuid())
+  medication     Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  medicationId   String
+  time           String
+  frequencyType  String
+  frequencyValue Int?
+  daysOfWeek     String?
+  endDate        String?
+  active         Boolean    @default(true)
+  createdAt      DateTime   @default(now()) @db.Timestamptz
+  updatedAt      DateTime   @updatedAt @db.Timestamptz
+
+  intakes IntakeLog[]
+
+  @@index([medicationId])
+}
+
+model IntakeLog {
+  id           String     @id @default(cuid())
+  medication   Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  medicationId String
+  schedule     Schedule?  @relation(fields: [scheduleId], references: [id])
+  scheduleId   String?
+  scheduledFor DateTime   @db.Timestamptz
+  action       String // "CONFIRMED" | "SNOOZED" | "SKIPPED" | "POSTPONED" (validado en API)
+  actionAt     DateTime   @db.Timestamptz
+  note         String?
+  createdAt    DateTime   @default(now()) @db.Timestamptz
+
+  @@index([medicationId, scheduledFor])
+}
+
+model PatientCaregiver {
+  id String @id @default(cuid())
+
+  // Paciente (User con role="PATIENT")
+  patient   User   @relation("PC_Patient", fields: [patientId], references: [id], onDelete: Cascade)
+  patientId String
+
+  // Cuidador (User con role="CAREGIVER")
+  caregiver   User   @relation("PC_Caregiver", fields: [caregiverId], references: [id], onDelete: Cascade)
+  caregiverId String
+
+  relation  String?
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@unique([patientId, caregiverId]) // evita duplicados
+  @@index([caregiverId])
+  @@index([patientId])
+}
