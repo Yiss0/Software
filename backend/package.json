@@ -11,7 +11,7 @@
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
-    "@prisma/client": "^6.16.2",
+    "@prisma/client": "^6.16.3",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
@@ -22,7 +22,7 @@
     "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
-    "prisma": "^6.16.2",
+    "prisma": "^6.16.3",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.5.4"
   }

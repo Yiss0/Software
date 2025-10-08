@@ -1,218 +1,71 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
-import { PrismaClient, Medication, Schedule, IntakeLog } from '@prisma/client';
+import 'dotenv/config';
+import { PrismaClient, Medication, Schedule } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { z } from 'zod';
 
 const app = express();
 app.use(cors());
-const prisma = new PrismaClient();
-
 app.use(express.json());
 
-// --- LÓGICA DE CÁLCULO (TRADUCIDA DE TU MEDICATIONLOGIC.TS) ---
+const prisma = new PrismaClient();
 
-// --- 2. ENDPOINT DE LOGIN MODIFICADO ---
+// ================= Health =================
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ ok: true });
+});
+
+// ================= Auth/Login =================
 app.post('/login', async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
+  const { email, password } = req.body as { email?: string; password?: string };
+  if (!email || !password) return res.status(400).json({ error: 'Email and password are required' });
+
   try {
     const user = await prisma.user.findUnique({
       where: { email: email.toLowerCase().trim() }
     });
-    
-    // Si no encontramos al usuario O la contraseña no coincide, damos el mismo error genérico
-    if (!user || !user.password) {
-      return res.status(404).json({ error: 'Invalid credentials' });
-    }
+    if (!user || !user.password) return res.status(404).json({ error: 'Invalid credentials' });
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) return res.status(404).json({ error: 'Invalid credentials' });
 
-    if (!isPasswordValid) {
-      return res.status(404).json({ error: 'Invalid credentials' });
-    }
-
-    // No devolvemos el hash de la contraseña al cliente por seguridad
-    const { password: _, ...userWithoutPassword } = user;
-    res.json(userWithoutPassword);
-
-  } catch (error) {
+    const { password: _pw, ...safeUser } = user;
+    res.json(safeUser);
+  } catch {
     res.status(500).json({ error: 'An unexpected error occurred.' });
   }
 });
 
-/**
- * Calcula la fecha y hora de la próxima toma para una regla de horario individual.
- */
-function getNextTriggerDate(schedule: Schedule): Date | null {
-  const [hour, minute] = schedule.time.split(':').map(Number);
-  const now = new Date(); // Usamos la hora del servidor
-
-  switch (schedule.frequencyType) {
-    case 'DAILY': {
-      const nextDate = new Date();
-      nextDate.setHours(hour, minute, 0, 0);
-      if (nextDate <= now) {
-        nextDate.setDate(now.getDate() + 1);
-      }
-      return nextDate;
-    }
-    case 'HOURLY': {
-      if (!schedule.frequencyValue) return null;
-      let nextDate = new Date();
-      nextDate.setHours(hour, minute, 0, 0);
-      if (nextDate <= now) {
-        while (nextDate <= now) {
-          nextDate.setHours(nextDate.getHours() + schedule.frequencyValue);
-        }
-      }
-      return nextDate;
-    }
-    case 'WEEKLY': {
-      const days = schedule.daysOfWeek?.split(',').map(Number) || [];
-      if (days.length === 0) return null;
-      
-      for (let i = 0; i < 7; i++) {
-        const checkDate = new Date();
-        checkDate.setDate(now.getDate() + i);
-        const dayOfWeek = checkDate.getDay();
-        
-        if (days.includes(dayOfWeek)) {
-          const potentialNextDate = new Date(checkDate);
-          potentialNextDate.setHours(hour, minute, 0, 0);
-          if (potentialNextDate > now) {
-            return potentialNextDate;
-          }
-        }
-      }
-      return null;
-    }
-  }
-  return null;
-}
-
-// Interfaz para el objeto que devolveremos
-interface NextDoseResponse {
-  medication: Medication;
-  schedule: Schedule;
-  triggerDate: Date;
-  isPostponed?: boolean;
-}
-
-// --- NUEVO ENDPOINT PARA LA PRÓXIMA DOSIS ---
-app.get('/patients/:patientId/next-dose', async (req: Request, res: Response) => {
-  const { patientId } = req.params;
-  const now = new Date();
-
-  try {
-    // 1. Obtenemos todos los medicamentos y sus horarios asociados para el paciente
-    const medicationsWithSchedules = await prisma.medication.findMany({
-      where: { patientId, active: true, deletedAt: null },
-      include: { schedules: { where: { active: true } } },
-    });
-
-    // 2. Obtenemos todos los registros de tomas de hoy
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date();
-    endOfToday.setHours(23, 59, 59, 999);
-    
-    const todaysLogs = await prisma.intakeLog.findMany({
-        where: {
-            medication: { patientId },
-            actionAt: { gte: startOfToday, lte: endOfToday }
-        }
-    });
-
-    // 3. Calculamos todas las posibles dosis futuras
-    const upcomingDoses: NextDoseResponse[] = [];
-    for (const med of medicationsWithSchedules) {
-      for (const schedule of med.schedules) {
-        const triggerDate = getNextTriggerDate(schedule);
-        if (triggerDate) {
-          const logForThisDose = todaysLogs.find(log => 
-            log.medicationId === med.id &&
-            new Date(log.scheduledFor).getHours() === triggerDate.getHours() &&
-            new Date(log.scheduledFor).getMinutes() === triggerDate.getMinutes()
-          );
-
-          if (logForThisDose) {
-            if (logForThisDose.action === 'POSTPONED') {
-              const postponedTime = new Date(new Date(logForThisDose.actionAt).getTime() + 10 * 60000); // Asumimos 10 min de posposición
-              if (postponedTime > now) {
-                upcomingDoses.push({
-                  medication: med,
-                  schedule: schedule,
-                  triggerDate: postponedTime,
-                  isPostponed: true,
-                });
-              }
-            }
-          } else {
-            upcomingDoses.push({
-              medication: med,
-              schedule: schedule,
-              triggerDate: triggerDate,
-            });
-          }
-        }
-      }
-    }
-
-    // 4. Si no hay ninguna dosis, respondemos que no hay nada
-    if (upcomingDoses.length === 0) {
-      return res.json(null);
-    }
-
-    // 5. Ordenamos las dosis y devolvemos la más cercana
-    upcomingDoses.sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime());
-    res.json(upcomingDoses[0]);
-
-  } catch (error) {
-    console.error("Error calculando la próxima dosis:", error);
-    res.status(500).json({ error: "No se pudo calcular la próxima dosis." });
-  }
-});
-
-// --- RUTAS ORIGINALES (AHORA CON TIPOS) ---
-
-// Health check
-// 2. Añadimos los tipos a req y res
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ ok: true });
-});
-
-// Crear paciente
+// ================= Pacientes =================
 app.post('/patients', async (req: Request, res: Response) => {
-  const { firstName, lastName, email, phone, password } = req.body;
+  const { firstName, lastName, email, phone, password } = req.body as {
+    firstName?: string; lastName?: string; email?: string; phone?: string; password?: string;
+  };
   if (!firstName || !lastName || !email || !password) {
     return res.status(400).json({ error: 'Required fields are missing' });
   }
-  try {
-    const saltRounds = 10;
-    const passwordHash = await bcrypt.hash(password, saltRounds);
 
+  try {
+    const passwordHash = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { 
-        firstName, 
-        lastName, 
-        email: email.toLowerCase().trim(), 
-        phone, 
-        password: passwordHash, // Guardamos el hash, no la contraseña original
-        role: 'PATIENT' 
+      data: {
+        firstName,
+        lastName,
+        email: email.toLowerCase().trim(),
+        phone,
+        password: passwordHash,
+        role: 'PATIENT'
       }
     });
-
-    const { password: _, ...userWithoutPassword } = user;
-    res.status(201).json(userWithoutPassword);
-
-  } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
+    const { password: _pw, ...safeUser } = user;
+    res.status(201).json(safeUser);
+  } catch (e: any) {
+    if (e?.code === 'P2002') return res.status(409).json({ error: 'Email already exists' });
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
-// Obtener paciente por id
 app.get('/patients/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   const user = await prisma.user.findUnique({ where: { id } });
@@ -220,30 +73,24 @@ app.get('/patients/:id', async (req: Request, res: Response) => {
   res.json(user);
 });
 
-// Crear medicamento
+// ================= Medicamentos =================
 app.post('/patients/:patientId/medications', async (req: Request, res: Response) => {
   const { patientId } = req.params;
-  const { name, dosage, quantity, presentation, instructions, color } = req.body;
+  const { name, dosage, quantity, presentation, instructions, color } = req.body as {
+    name?: string; dosage?: string; quantity?: number; presentation?: string; instructions?: string; color?: string;
+  };
   if (!name) return res.status(400).json({ error: 'Name is required' });
+
   try {
     const med = await prisma.medication.create({
-      data: {
-        patientId,
-        name,
-        dosage,
-        quantity,
-        presentation,
-        instructions,
-        color
-      }
+      data: { patientId, name, dosage, quantity, presentation, instructions, color }
     });
     res.status(201).json(med);
-  } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
+  } catch (e: any) {
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
-// Listar medicamentos de paciente
 app.get('/patients/:patientId/medications', async (req: Request, res: Response) => {
   const { patientId } = req.params;
   const meds = await prisma.medication.findMany({
@@ -252,7 +99,6 @@ app.get('/patients/:patientId/medications', async (req: Request, res: Response) 
   res.json(meds);
 });
 
-// Soft delete medicamento
 app.delete('/medications/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
   try {
@@ -261,45 +107,42 @@ app.delete('/medications/:id', async (req: Request, res: Response) => {
       data: { active: false, deletedAt: new Date() }
     });
     res.json({ ok: true, medication: med });
-  } catch (err) {
+  } catch {
     res.status(404).json({ error: 'Not found' });
   }
 });
 
-// Crear horario
+// ================= Horarios =================
 app.post('/schedules', async (req: Request, res: Response) => {
-  const { medicationId, time, frequencyType, frequencyValue, daysOfWeek, endDate } = req.body;
+  const { medicationId, time, frequencyType, frequencyValue, daysOfWeek, endDate } = req.body as {
+    medicationId?: string; time?: string; frequencyType?: string; frequencyValue?: number;
+    daysOfWeek?: string; endDate?: string;
+  };
   if (!medicationId || !time || !frequencyType) return res.status(400).json({ error: 'Missing fields' });
+
   try {
     const schedule = await prisma.schedule.create({
-      data: {
-        medicationId,
-        time,
-        frequencyType,
-        frequencyValue,
-        daysOfWeek,
-        endDate
-      }
+      data: { medicationId, time, frequencyType, frequencyValue, daysOfWeek, endDate }
     });
     res.status(201).json(schedule);
-  } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
+  } catch (e: any) {
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
-// Listar horarios de medicamento
 app.get('/medications/:medId/schedules', async (req: Request, res: Response) => {
   const { medId } = req.params;
-  const schedules = await prisma.schedule.findMany({
-    where: { medicationId: medId, active: true }
-  });
+  const schedules = await prisma.schedule.findMany({ where: { medicationId: medId, active: true } });
   res.json(schedules);
 });
 
-// Registrar toma
+// ================= Tomas (IntakeLog) =================
 app.post('/intakes', async (req: Request, res: Response) => {
-  const { medicationId, scheduleId, scheduledFor, action, actionAt, note } = req.body;
+  const { medicationId, scheduleId, scheduledFor, action, actionAt, note } = req.body as {
+    medicationId?: string; scheduleId?: string; scheduledFor?: string; action?: string; actionAt?: string; note?: string;
+  };
   if (!medicationId || !scheduledFor || !action || !actionAt) return res.status(400).json({ error: 'Missing fields' });
+
   try {
     const intake = await prisma.intakeLog.create({
       data: {
@@ -312,170 +155,349 @@ app.post('/intakes', async (req: Request, res: Response) => {
       }
     });
     res.status(201).json(intake);
-  } catch (err) {
-    res.status(400).json({ error: (err as Error).message });
+  } catch (e: any) {
+    res.status(400).json({ error: (e as Error).message });
   }
 });
 
-// Listar tomas de paciente por rango de fechas
-// --- RUTA CORREGIDA ---
+// Listar tomas de paciente por rango de fechas (incluye info de medicamento)
 app.get('/patients/:patientId/intakes', async (req: Request, res: Response) => {
   const { patientId } = req.params;
-  const { from, to } = req.query as { from: string, to: string };
+  const { from, to } = req.query as { from?: string; to?: string };
+
   try {
     const user = await prisma.user.findUnique({ where: { id: patientId } });
     if (!user) return res.status(404).json({ error: 'Patient not found' });
 
     const intakes = await prisma.intakeLog.findMany({
       where: {
-        medication: { patientId: patientId },
-        scheduledFor: {
-          gte: from ? new Date(from) : undefined,
-          lte: to ? new Date(to) : undefined,
-        },
-      },
-      include: {
-        medication: true, // Esta es la parte clave que faltaba en la versión anterior
-      },
-      orderBy: {
-        actionAt: 'desc',
-      },
-    });
-    res.json(intakes);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
-  }
-});
-
-// --- ÚNICO CAMBIO EN ESTE ARCHIVO ---
-// Listar tomas de paciente por rango de fechas
-app.get('/patients/:patientId/intakes', async (req: Request, res: Response) => {
-  const { patientId } = req.params;
-  const { from, to } = req.query as { from: string, to: string };
-  
-  try {
-    const user = await prisma.user.findUnique({ where: { id: patientId } });
-    if (!user) return res.status(404).json({ error: 'Patient not found' });
-
-    const intakes = await prisma.intakeLog.findMany({
-      where: {
-        medication: { patientId: patientId }, // Simplificamos la consulta
+        medication: { patientId },
         scheduledFor: {
           gte: from ? new Date(from) : undefined,
           lte: to ? new Date(to) : undefined
         }
       },
-      // Con 'include', le decimos a Prisma que también traiga la información del medicamento asociado.
-      include: {
-        medication: true 
-      },
-      orderBy: {
-        actionAt: 'desc' // Ordenamos por fecha de la acción descendente
-      }
+      include: { medication: true },
+      orderBy: { actionAt: 'desc' }
     });
     res.json(intakes);
-  } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+  } catch (e: any) {
+    res.status(500).json({ error: (e as Error).message });
   }
 });
 
+// ================= Lógica next-dose (opcional, respeta tus campos) =================
+function getNextTriggerDate(schedule: Schedule): Date | null {
+  const [hour, minute] = schedule.time.split(':').map(Number);
+  const now = new Date();
 
-// --- NUEVO CÓDIGO DE SINCRONIZACIÓN (CON TIPOS) ---
+  switch (schedule.frequencyType) {
+    case 'DAILY': {
+      const nextDate = new Date();
+      nextDate.setHours(hour, minute, 0, 0);
+      if (nextDate <= now) nextDate.setDate(now.getDate() + 1);
+      return nextDate;
+    }
+    case 'HOURLY': {
+      if (!schedule.frequencyValue) return null;
+      let nextDate = new Date();
+      nextDate.setHours(hour, minute, 0, 0);
+      if (nextDate <= now) {
+        while (nextDate <= now) nextDate.setHours(nextDate.getHours() + schedule.frequencyValue);
+      }
+      return nextDate;
+    }
+    case 'WEEKLY': {
+      const days = (schedule.daysOfWeek || '').split(',').map(Number).filter((n) => !Number.isNaN(n));
+      if (days.length === 0) return null;
+      for (let i = 0; i < 7; i++) {
+        const checkDate = new Date();
+        checkDate.setDate(now.getDate() + i);
+        const dow = checkDate.getDay();
+        if (days.includes(dow)) {
+          const candidate = new Date(checkDate);
+          candidate.setHours(hour, minute, 0, 0);
+          if (candidate > now) return candidate;
+        }
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
 
+interface NextDoseResponse {
+  medication: Medication;
+  schedule: Schedule;
+  triggerDate: Date;
+  isPostponed?: boolean;
+}
+
+app.get('/patients/:patientId/next-dose', async (req: Request, res: Response) => {
+  const { patientId } = req.params;
+  const now = new Date();
+
+  try {
+    const meds = await prisma.medication.findMany({
+      where: { patientId, active: true, deletedAt: null },
+      include: { schedules: { where: { active: true } } },
+    });
+
+    const start = new Date(); start.setHours(0, 0, 0, 0);
+    const end = new Date();   end.setHours(23, 59, 59, 999);
+
+    const todaysLogs = await prisma.intakeLog.findMany({
+      where: {
+        medication: { patientId },
+        actionAt: { gte: start, lte: end }
+      }
+    });
+
+    const upcoming: NextDoseResponse[] = [];
+    for (const med of meds) {
+      for (const s of med.schedules) {
+        const trigger = getNextTriggerDate(s);
+        if (!trigger) continue;
+
+        const logMatch = todaysLogs.find(l =>
+          l.medicationId === med.id &&
+          new Date(l.scheduledFor).getHours() === trigger.getHours() &&
+          new Date(l.scheduledFor).getMinutes() === trigger.getMinutes()
+        );
+
+        if (logMatch && logMatch.action === 'POSTPONED') {
+          const postponed = new Date(new Date(logMatch.actionAt).getTime() + 10 * 60000);
+          if (postponed > now) {
+            upcoming.push({ medication: med, schedule: s, triggerDate: postponed, isPostponed: true });
+          }
+        } else if (!logMatch) {
+          upcoming.push({ medication: med, schedule: s, triggerDate: trigger });
+        }
+      }
+    }
+
+    if (!upcoming.length) return res.json(null);
+    upcoming.sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime());
+    res.json(upcoming[0]);
+  } catch (e) {
+    console.error('Error next-dose:', e);
+    res.status(500).json({ error: 'No se pudo calcular la próxima dosis.' });
+  }
+});
+
+// ================= Cuidadores =================
+// Validaciones Zod
+const caregiverCreateSchema = z.object({
+  firstName: z.string().min(1, 'firstName requerido'),
+  lastName: z.string().min(1, 'lastName requerido'),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+  password: z.string().min(6).optional(), // opcional para no romper front
+});
+
+const caregiverLinkSchema = z.object({
+  patientId: z.string().min(1, 'patientId requerido'),
+  relation: z.string().optional(), // "hijo", "esposo(a)", etc.
+});
+
+// Crear cuidador (User con role = CAREGIVER)
+app.post('/caregivers', async (req: Request, res: Response) => {
+  const parsed = caregiverCreateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const { firstName, lastName, email, phone, password } = parsed.data;
+
+  try {
+    const passwordHash = password ? await bcrypt.hash(password, 10) : null;
+    const caregiver = await prisma.user.create({
+      data: {
+        firstName,
+        lastName,
+        email: email?.toLowerCase().trim(),
+        phone,
+        password: passwordHash || undefined,
+        role: 'CAREGIVER'
+      }
+    });
+    const { password: _pw, ...safe } = caregiver;
+    res.status(201).json(safe);
+  } catch (e: any) {
+    if (e?.code === 'P2002') return res.status(409).json({ error: 'Email already exists' });
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Obtener cuidador por id
+app.get('/caregivers/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const cg = await prisma.user.findFirst({ where: { id, role: 'CAREGIVER' } });
+  if (!cg) return res.status(404).json({ error: 'Caregiver not found' });
+  const { password: _pw, ...safe } = cg;
+  res.json(safe);
+});
+
+// Vincular paciente a cuidador
+app.post('/caregivers/:caregiverId/patients', async (req: Request, res: Response) => {
+  const { caregiverId } = req.params;
+  const parsed = caregiverLinkSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+  const { patientId, relation } = parsed.data;
+
+  // Validar roles/exists
+  const caregiver = await prisma.user.findFirst({ where: { id: caregiverId, role: 'CAREGIVER' } });
+  if (!caregiver) return res.status(404).json({ error: 'Caregiver not found' });
+
+  const patient = await prisma.user.findFirst({ where: { id: patientId, role: 'PATIENT' } });
+  if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+  try {
+    const link = await prisma.patientCaregiver.create({
+      data: { caregiverId, patientId, relation },
+    });
+    res.status(201).json(link);
+  } catch (e: any) {
+    if (e?.code === 'P2002') return res.status(409).json({ error: 'Link already exists' });
+    res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// Listar pacientes de un cuidador
+app.get('/caregivers/:caregiverId/patients', async (req: Request, res: Response) => {
+  const { caregiverId } = req.params;
+
+  const caregiver = await prisma.user.findFirst({ where: { id: caregiverId, role: 'CAREGIVER' } });
+  if (!caregiver) return res.status(404).json({ error: 'Caregiver not found' });
+
+  const links = await prisma.patientCaregiver.findMany({
+    where: { caregiverId },
+    include: { patient: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json(links);
+});
+
+// Listar cuidadores de un paciente
+app.get('/patients/:patientId/caregivers', async (req: Request, res: Response) => {
+  const { patientId } = req.params;
+
+  const patient = await prisma.user.findFirst({ where: { id: patientId, role: 'PATIENT' } });
+  if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+  const links = await prisma.patientCaregiver.findMany({
+    where: { patientId },
+    include: { caregiver: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json(links);
+});
+
+// Desvincular (opcional, por completitud)
+app.delete('/caregivers/:caregiverId/patients/:patientId', async (req: Request, res: Response) => {
+  const { caregiverId, patientId } = req.params;
+  try {
+    await prisma.patientCaregiver.delete({
+      where: { patientId_caregiverId: { patientId, caregiverId } }
+    });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Link not found' });
+  }
+});
+
+// ================= Sincronización (mantengo tu lógica, sin tocar campos del front) =================
 app.post('/sync/full', async (req: Request, res: Response) => {
-  const { users, medications, schedules, intakeLogs } = req.body;
-
+  const { users, medications, schedules, intakeLogs } = req.body as any;
   if (!users || !medications || !schedules || !intakeLogs) {
     return res.status(400).json({ error: 'Faltan datos en el payload de sincronización.' });
   }
-  console.log('Iniciando proceso de sincronización completa...');
+
   try {
-    await prisma.$transaction(async (tx: any) => {
-      console.log('Borrando datos antiguos del backend...');
+    await prisma.$transaction(async (tx) => {
       await tx.intakeLog.deleteMany({});
       await tx.schedule.deleteMany({});
       await tx.medication.deleteMany({});
       await tx.user.deleteMany({});
 
       const userMap = new Map<number, string>();
-      const medicationMap = new Map<number, string>();
+      const medMap = new Map<number, string>();
 
-      console.log(`Sincronizando ${users.length} usuarios...`);
-      for (const user of users) {
+      for (const u of users) {
         const newUser = await tx.user.create({
           data: {
-            firstName: user.nombre,
-            lastName: user.apellido,
-            email: user.email,
-            phone: user.telefono,
-            birthDate: user.fechaNacimiento,
-            address: user.direccion,
-            emergencyContact: user.contactoEmergencia,
-            emergencyPhone: user.telefonoEmergencia,
-            medicalConditions: user.condicionesMedicas,
-            allergies: user.alergias,
+            firstName: u.nombre,
+            lastName:  u.apellido,
+            email:     u.email,
+            phone:     u.telefono,
+            birthDate: u.fechaNacimiento,
+            address:   u.direccion,
+            emergencyContact:  u.contactoEmergencia,
+            emergencyPhone:    u.telefonoEmergencia,
+            medicalConditions: u.condicionesMedicas,
+            allergies:         u.alergias,
+            role: 'PATIENT', // por defecto
           },
         });
-        userMap.set(user.id, newUser.id);
+        userMap.set(u.id, newUser.id);
       }
 
-      console.log(`Sincronizando ${medications.length} medicamentos...`);
-      for (const med of medications) {
-        const newPatientId = userMap.get(med.userId);
-        if (!newPatientId) continue;
+      for (const m of medications) {
+        const pid = userMap.get(m.userId);
+        if (!pid) continue;
         const newMed = await tx.medication.create({
           data: {
-            patientId: newPatientId,
-            name: med.name,
-            dosage: med.dosage,
-            quantity: med.quantity,
-            instructions: med.instructions,
+            patientId: pid,
+            name: m.name,
+            dosage: m.dosage,
+            quantity: m.quantity,
+            instructions: m.instructions,
+            presentation: m.presentation,
+            color: m.color,
           },
         });
-        medicationMap.set(med.id, newMed.id);
+        medMap.set(m.id, newMed.id);
       }
 
-      console.log(`Sincronizando ${schedules.length} horarios...`);
-      for (const schedule of schedules) {
-        const newMedId = medicationMap.get(schedule.medicationId);
-        if (!newMedId) continue;
+      for (const s of schedules) {
+        const mid = medMap.get(s.medicationId);
+        if (!mid) continue;
         await tx.schedule.create({
           data: {
-            medicationId: newMedId,
-            time: schedule.time,
-            frequencyType: schedule.frequencyType,
-            frequencyValue: schedule.frequencyValue,
-            daysOfWeek: schedule.daysOfWeek,
-            endDate: schedule.endDate,
+            medicationId: mid,
+            time: s.time,
+            frequencyType: s.frequencyType,
+            frequencyValue: s.frequencyValue,
+            daysOfWeek: s.daysOfWeek,
+            endDate: s.endDate
           },
         });
       }
-      
-      console.log(`Sincronizando ${intakeLogs.length} registros de tomas...`);
-      for (const log of intakeLogs) {
-        const newMedId = medicationMap.get(log.medicationId);
-        if (!newMedId) continue;
+
+      for (const l of intakeLogs) {
+        const mid = medMap.get(l.medicationId);
+        if (!mid) continue;
         await tx.intakeLog.create({
           data: {
-            medicationId: newMedId,
-            scheduledFor: new Date(log.scheduledFor),
-            action: log.action,
-            actionAt: new Date(log.actionAt),
+            medicationId: mid,
+            scheduledFor: new Date(l.scheduledFor),
+            action: l.action,
+            actionAt: new Date(l.actionAt),
+            note: l.note
           },
         });
       }
     });
+
     res.status(200).json({ message: 'Sincronización completada exitosamente.' });
-    console.log('Sincronización finalizada.');
   } catch (error) {
     console.error('Error durante la sincronización:', error);
     res.status(500).json({ error: 'Ocurrió un error durante la sincronización.' });
   }
 });
 
-
-// --- INICIO DEL SERVIDOR ---
-
+// ================= Server =================
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`API listening on port ${PORT}`);
