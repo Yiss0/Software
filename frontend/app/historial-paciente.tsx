@@ -1,13 +1,9 @@
-// frontend/app/(tabs)/historial.tsx (CORREGIDO)
-
-import { Calendar, CircleCheck as CheckCircle, Clock, Filter, CircleX as XCircle } from 'lucide-react-native';
+import { Stack, useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { Calendar, CircleCheck as CheckCircle, Clock, Filter, CircleX as XCircle, ArrowLeft } from 'lucide-react-native';
 import React, { useState, useCallback } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View, FlatList, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from 'expo-router';
-import { useAuth } from '../../context/AuthContext';
-import { usePatient } from '../../context/PatientContext';
-import * as apiService from '../../services/apiService';
+import * as apiService from '../services/apiService';
 
 type HistorialItem = {
   id: string;
@@ -19,31 +15,24 @@ type HistorialItem = {
   estado: 'TAKEN' | 'SKIPPED' | 'POSTPONED';
 };
 
-export default function HistorialScreen() {
+export default function HistorialPacienteScreen() {
+  const router = useRouter();
+  const { patientId, patientName } = useLocalSearchParams<{ patientId: string; patientName?: string }>();
+
   const [filtroActivo, setFiltroActivo] = useState<'todos' | 'tomados' | 'omitidos'>('todos');
   const [historial, setHistorial] = useState<HistorialItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  
-  // --- CAMBIO CLAVE ---
-  const { user } = useAuth();
-  const { selectedPatient } = usePatient();
 
   useFocusEffect(
     useCallback(() => {
       const cargarHistorial = async () => {
-        // --- CAMBIO CLAVE: Decidimos qué ID usar ---
-        const patientIdToShow = user?.role === 'CAREGIVER' ? selectedPatient?.id : user?.id;
-
-        if (!patientIdToShow) {
-            setIsLoading(false);
+        if (!patientId) {
+            Alert.alert("Error", "No se recibió el ID del paciente.", [{ text: "OK", onPress: () => router.back() }]);
             return;
-        }
-
+        };
         setIsLoading(true);
         try {
-          // --- CAMBIO CLAVE: Usamos el ID correcto ---
-          const logsFromServer = await apiService.fetchIntakeHistory(patientIdToShow);
-          
+          const logsFromServer = await apiService.fetchIntakeHistory(patientId);
           const formattedLogs: HistorialItem[] = logsFromServer
             .filter(log => log.medication)
             .map(log => ({
@@ -58,12 +47,13 @@ export default function HistorialScreen() {
           setHistorial(formattedLogs);
         } catch (e) {
           console.error(e);
+          Alert.alert("Error", "No se pudo cargar el historial del paciente.");
         } finally {
-            setIsLoading(false);
+          setIsLoading(false);
         }
       };
       cargarHistorial();
-    }, [user, selectedPatient]) // Depende del usuario y paciente seleccionado
+    }, [patientId])
   );
 
   const historialFiltrado = historial.filter(item => {
@@ -72,6 +62,7 @@ export default function HistorialScreen() {
     if (filtroActivo === 'omitidos') return item.estado === 'SKIPPED';
     return true;
   });
+  
   const getEstadoColor = (estado: string) => {
     switch (estado) {
       case 'TAKEN': return '#16A34A';
@@ -136,12 +127,17 @@ export default function HistorialScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Historial</Text>
-        <TouchableOpacity style={styles.filterButton}>
-          <Filter size={24} color="#2563EB" />
-        </TouchableOpacity>
-      </View>
+      <Stack.Screen 
+        options={{
+            headerShown: true,
+            headerTitle: `Historial de ${patientName || 'Paciente'}`,
+            headerLeft: () => (
+                <TouchableOpacity onPress={() => router.back()} style={{ marginLeft: 10 }}>
+                    <ArrowLeft size={24} color="#000" />
+                </TouchableOpacity>
+            )
+        }}
+      />
       <View style={styles.filterContainer}>
         <TouchableOpacity style={[styles.filterChip, filtroActivo === 'todos' && styles.filterChipActive]} onPress={() => setFiltroActivo('todos')}>
           <Text style={[styles.filterChipText, filtroActivo === 'todos' && styles.filterChipTextActive]}>Todos</Text>
@@ -161,7 +157,7 @@ export default function HistorialScreen() {
           renderItem={renderItem}
           keyExtractor={(item) => item.id.toString()}
           style={styles.scrollView}
-          ListEmptyComponent={<View style={styles.emptyContainer}><Text style={styles.emptyText}>Aún no hay registros en tu historial.</Text></View>}
+          ListEmptyComponent={<View style={styles.emptyContainer}><Text style={styles.emptyText}>El paciente no tiene registros en su historial.</Text></View>}
         />
       )}
     </SafeAreaView>
@@ -170,9 +166,6 @@ export default function HistorialScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 20, },
-  title: { fontSize: 28, fontWeight: '700', color: '#1F2937', },
-  filterButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 4, },
   filterContainer: { flexDirection: 'row', paddingHorizontal: 20, gap: 12, marginBottom: 20, },
   filterChip: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 25, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D1D5DB', },
   filterChipActive: { backgroundColor: '#2563EB', borderColor: '#2563EB', },

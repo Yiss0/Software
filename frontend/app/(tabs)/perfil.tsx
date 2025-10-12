@@ -1,13 +1,12 @@
-import { Link } from 'expo-router';
+import { Link, useFocusEffect } from 'expo-router';
 import { Camera, CreditCard as Edit, Save, Settings, User, LogOut, DatabaseZap } from 'lucide-react-native';
 import React, { useState, useCallback } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
-import { useFocusEffect } from 'expo-router';
+import { usePatient } from '../../context/PatientContext';
 import * as apiService from '../../services/apiService';
 
-// Un tipo local para el perfil, compatible con la API
 type UserProfileState = {
   nombre: string;
   apellido: string;
@@ -22,45 +21,54 @@ type UserProfileState = {
 };
 
 export default function PerfilScreen() {
-  const { session, setSession } = useAuth();
+  const { user, setUser } = useAuth();
+  const { selectedPatient, clearSelectedPatient } = usePatient();
   const [editando, setEditando] = useState(false);
   const [perfil, setPerfil] = useState<UserProfileState | null>(null);
   const [perfilTemporal, setPerfilTemporal] = useState<Partial<UserProfileState> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  
+  const isCaregiverView = user?.role === 'CAREGIVER' && selectedPatient;
+  const profileTitle = isCaregiverView ? `Perfil de ${selectedPatient?.firstName}` : "Mi Perfil";
 
   useFocusEffect(
     useCallback(() => {
       const cargarPerfil = async () => {
-        setIsLoading(true);
-        if (session) {
-          try {
-            const perfilData = await apiService.fetchUserProfile(session);
-            if (perfilData) {
-              // Adaptamos los nombres de la API a los que usa el formulario
-              const adaptedProfile: UserProfileState = {
-                nombre: perfilData.firstName,
-                apellido: perfilData.lastName,
-                email: perfilData.email,
-                telefono: perfilData.phone,
-                fechaNacimiento: perfilData.birthDate,
-                direccion: perfilData.address,
-                contactoEmergencia: perfilData.emergencyContact,
-                telefonoEmergencia: perfilData.emergencyPhone,
-                condicionesMedicas: perfilData.medicalConditions,
-                alergias: perfilData.allergies,
-              };
-              setPerfil(adaptedProfile);
-              setPerfilTemporal(adaptedProfile);
-            }
-          } catch (error) {
-            console.error("Error al cargar el perfil:", error);
-            Alert.alert("Error", "No se pudo cargar el perfil desde el servidor.");
-          }
+        const profileIdToLoad = isCaregiverView ? selectedPatient?.id : user?.id;
+
+        if (!profileIdToLoad) {
+          setIsLoading(false);
+          return;
         }
-        setIsLoading(false);
+
+        setIsLoading(true);
+        try {
+          const perfilData = await apiService.fetchUserProfile(profileIdToLoad);
+          if (perfilData) {
+            const adaptedProfile: UserProfileState = {
+              nombre: perfilData.firstName,
+              apellido: perfilData.lastName,
+              email: perfilData.email,
+              telefono: perfilData.phone,
+              fechaNacimiento: perfilData.birthDate,
+              direccion: perfilData.address,
+              contactoEmergencia: perfilData.emergencyContact,
+              telefonoEmergencia: perfilData.emergencyPhone,
+              condicionesMedicas: perfilData.medicalConditions,
+              alergias: perfilData.allergies,
+            };
+            setPerfil(adaptedProfile);
+            setPerfilTemporal(adaptedProfile);
+          }
+        } catch (error) {
+          console.error("Error al cargar el perfil:", error);
+          Alert.alert("Error", "No se pudo cargar el perfil desde el servidor.");
+        } finally {
+          setIsLoading(false);
+        }
       };
       cargarPerfil();
-    }, [session])
+    }, [user, selectedPatient])
   );
 
   const guardarPerfil = async () => {
@@ -82,7 +90,10 @@ export default function PerfilScreen() {
       "¿Estás seguro de que quieres cerrar sesión?",
       [
         { text: "Cancelar", style: "cancel" },
-        { text: "Sí, cerrar sesión", onPress: () => setSession(null) }
+        { text: "Sí, cerrar sesión", onPress: () => {
+            setUser(null);
+            clearSelectedPatient();
+        }}
       ]
     );
   };
@@ -98,12 +109,12 @@ export default function PerfilScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Mi Perfil</Text>
+        <Text style={styles.title}>{profileTitle}</Text>
         <View style={styles.headerActions}>
           <TouchableOpacity style={styles.settingsButton}>
             <Settings size={24} color="#6B7280" strokeWidth={2} />
           </TouchableOpacity>
-          {!editando ? (
+          {!isCaregiverView && (!editando ? (
             <TouchableOpacity style={styles.editButton} onPress={() => setEditando(true)}>
               <Edit size={24} color="#2563EB" strokeWidth={2} />
             </TouchableOpacity>
@@ -117,14 +128,14 @@ export default function PerfilScreen() {
                 <Text style={styles.saveButtonText}>Guardar</Text>
               </TouchableOpacity>
             </View>
-          )}
+          ))}
         </View>
       </View>
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.profilePhotoSection}>
           <View style={styles.profilePhoto}><User size={48} color="#6B7280" strokeWidth={2} /></View>
-          <TouchableOpacity style={styles.cameraButton}><Camera size={20} color="#FFFFFF" strokeWidth={2} /></TouchableOpacity>
+          {!isCaregiverView && <TouchableOpacity style={styles.cameraButton}><Camera size={20} color="#FFFFFF" strokeWidth={2} /></TouchableOpacity>}
         </View>
 
         <View style={styles.section}>
@@ -212,7 +223,7 @@ const styles = StyleSheet.create({
   scrollView: { flex: 1, paddingHorizontal: 20 },
   profilePhotoSection: { alignItems: 'center', marginBottom: 32, position: 'relative' },
   profilePhoto: { width: 120, height: 120, borderRadius: 60, backgroundColor: '#F3F4F6', alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: '#FFFFFF', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4, },
-  cameraButton: { position: 'absolute', bottom: 0, right: 0, width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#FFFFFF', },
+  cameraButton: { position: 'absolute', bottom: 0, right: '35%', width: 40, height: 40, borderRadius: 20, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#FFFFFF', },
   section: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4, },
   sectionTitle: { fontSize: 20, fontWeight: '700', color: '#1F2937', marginBottom: 16 },
   inputRow: { flexDirection: 'row' },

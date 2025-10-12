@@ -1,24 +1,31 @@
-import { Stack, router } from 'expo-router';
+// frontend/app/_layout.tsx (VERSIÓN SIMPLIFICADA Y FINAL)
+
+import { Stack, router, useSegments } from 'expo-router';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { PatientProvider } from '../context/PatientContext';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
 function RootLayoutNav() {
-  const { session, isLoading } = useAuth();
+  const { user, isLoading } = useAuth();
+  const segments = useSegments();
 
   useEffect(() => {
-    if (isLoading) return; // Wait until the session is loaded
+    if (isLoading) {
+      return; // No hacemos nada hasta que termine de cargar la sesión.
+    }
 
-    if (session) {
-      // If the user is logged in, go to the main app tabs
-      router.replace('/(tabs)');
-    } else {
-      // If the user is not logged in, show the user type selection screen
+    const inAuthGroup = segments[0] === '(auth)';
+
+    // Esta es la ÚNICA regla que necesitamos aquí:
+    // Si el usuario NO está logueado y NO está en una pantalla de autenticación,
+    // lo enviamos al grupo de autenticación.
+    if (!user && !inAuthGroup) {
       router.replace('/(auth)');
     }
-  }, [session, isLoading]);
+    
+  }, [user, isLoading, segments]);
   
-  // Display a loading indicator while checking for an active session
   if (isLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -27,23 +34,23 @@ function RootLayoutNav() {
     );
   }
 
-  // This Stack navigator defines all the possible navigation roots
+  // Asegúrate de que todos tus grupos de rutas estén definidos aquí.
   return (
-    <Stack>
-      <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="add-medication" options={{ headerShown: false }} />
-      <Stack.Screen name="edit-medication" options={{ headerShown: false }} />
-      <Stack.Screen name="modal" options={{ headerShown: false }} />
-      <Stack.Screen name="sync" options={{ headerShown: false }} />
-    </Stack>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="(caregiver)" />
+        <Stack.Screen name="historial-paciente" />
+      </Stack>
   );
 }
 
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <RootLayoutNav />
+      <PatientProvider>
+        <RootLayoutNav />
+      </PatientProvider>
     </AuthProvider>
   );
 }

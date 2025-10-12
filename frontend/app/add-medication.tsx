@@ -1,26 +1,33 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, FlatList, Keyboard, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, FlatList, Keyboard, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
+import { usePatient } from '../context/PatientContext';
 import * as apiService from '../services/apiService';
 import { Clock, Plus, Trash2 } from 'lucide-react-native';
 
 type ScheduleInput = apiService.NewSchedulePayload;
 
-/**
- * Convierte una hora local (ej: "22:10") a su equivalente en UTC (ej: "01:10" del día siguiente)
- */
 const convertLocalTimeToUTCString = (localTime: string): string => {
   if (!/^\d{2}:\d{2}$/.test(localTime)) return localTime;
   const [hours, minutes] = localTime.split(':').map(Number);
   const date = new Date();
-  date.setHours(hours, minutes, 0, 0); // Crea una fecha con la hora local de hoy
-
+  date.setHours(hours, minutes, 0, 0);
   const utcHours = String(date.getUTCHours()).padStart(2, '0');
   const utcMinutes = String(date.getUTCMinutes()).padStart(2, '0');
-  
   return `${utcHours}:${utcMinutes}`;
+};
+
+// --- FUNCIÓN AÑADIDA DE VUELTA ---
+const convertUTCTimeToLocalString = (utcTime: string): string => {
+    if (!/^\d{2}:\d{2}$/.test(utcTime)) return utcTime;
+    const [hours, minutes] = utcTime.split(':').map(Number);
+    const date = new Date();
+    date.setUTCHours(hours, minutes, 0, 0);
+    const localHours = String(date.getHours()).padStart(2, '0');
+    const localMinutes = String(date.getMinutes()).padStart(2, '0');
+    return `${localHours}:${localMinutes}`;
 };
 
 const formatTimeToAMPM = (time: string) => {
@@ -33,7 +40,8 @@ const formatTimeToAMPM = (time: string) => {
 };
 
 export default function AddMedicationScreen() {
-  const { session } = useAuth();
+  const { user } = useAuth();
+  const { selectedPatient } = usePatient();
   const [name, setName] = useState('');
   const [dosage, setDosage] = useState('');
   const [quantity, setQuantity] = useState('');
@@ -65,7 +73,6 @@ export default function AddMedicationScreen() {
       return;
     }
     
-    // Convertimos la hora local a UTC para guardarla
     const utcTime = convertLocalTimeToUTCString(time);
 
     if (schedules.some(s => s.time === utcTime)) {
@@ -74,7 +81,7 @@ export default function AddMedicationScreen() {
     }
 
     const newSchedule: ScheduleInput = { 
-        time: utcTime, // Guardamos la hora en UTC
+        time: utcTime,
         frequencyType: scheduleInput.frequencyType!, 
         frequencyValue: scheduleInput.frequencyType === 'HOURLY' ? scheduleInput.frequencyValue! : 1, 
         daysOfWeek: scheduleInput.frequencyType === 'WEEKLY' ? Array.from(selectedDays).join(',') : undefined, 
@@ -91,9 +98,16 @@ export default function AddMedicationScreen() {
   };
 
   const handleSave = async () => {
+    const patientIdToAddFor = user?.role === 'CAREGIVER' ? selectedPatient?.id : user?.id;
+
     if (!name || !dosage || !quantity) { Alert.alert('Campos incompletos', 'Por favor, complete nombre, dosis y cantidad.'); return; }
     if (schedules.length === 0) { Alert.alert('Sin horarios', 'Por favor, añada al menos un horario.'); return; }
-    if (!session) { Alert.alert('Error', 'No se ha encontrado la sesión del usuario.'); return; }
+    if (!patientIdToAddFor) { Alert.alert('Error', 'No se ha encontrado el perfil del paciente.'); return; }
+    
+    if (user?.role === 'CAREGIVER') {
+      Alert.alert('Acción no permitida', 'Los cuidadores solo pueden visualizar la información, no añadir nuevos medicamentos.');
+      return;
+    }
     
     setLoading(true);
     try {
@@ -104,7 +118,7 @@ export default function AddMedicationScreen() {
         instructions 
       };
 
-      const newMed = await apiService.addMedication(session, newMedPayload, schedules);
+      const newMed = await apiService.addMedication(patientIdToAddFor, newMedPayload, schedules);
 
       if (newMed && newMed.id) {
         Alert.alert('Éxito', 'Medicamento guardado en el servidor.');
@@ -120,8 +134,14 @@ export default function AddMedicationScreen() {
     }
   };
 
-  const getFrequencyText = (schedule: ScheduleInput): string => {
-    const formattedTime = formatTimeToAMPM(schedule.time);
+const getFrequencyText = (schedule: ScheduleInput): string => {
+    // 1. Tomamos la hora UTC guardada (ej. "23:30")
+    const utcTime = schedule.time;
+    // 2. La convertimos de vuelta a la hora local (ej. "20:30")
+    const localTime = convertUTCTimeToLocalString(utcTime);
+    // 3. Formateamos la hora local para mostrarla
+    const formattedTime = formatTimeToAMPM(localTime);
+
     switch (schedule.frequencyType) {
         case 'DAILY': return `Cada día a las ${formattedTime}`;
         case 'HOURLY': return `Cada ${schedule.frequencyValue} horas (desde ${formattedTime})`;
@@ -219,7 +239,7 @@ export default function AddMedicationScreen() {
             <Text style={styles.cancelButtonText}>Cancelar</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.saveButton, loading && styles.saveButtonDisabled]} onPress={handleSave} disabled={loading}>
-            <Text style={styles.saveButtonText}>{loading ? 'Guardando...' : 'Guardar'}</Text>
+            {loading ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.saveButtonText}>Guardar</Text>}
         </TouchableOpacity>
       </View>
     </SafeAreaView>

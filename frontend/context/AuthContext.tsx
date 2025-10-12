@@ -1,80 +1,65 @@
+// frontend/context/AuthContext.tsx
+
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
-import { SQLiteDatabase } from 'expo-sqlite';
-import * as db from '../services/database';
+import { UserProfile } from '../services/apiService'; // Importamos la interfaz de usuario
 
+// ¡IMPORTANTE! Hemos cambiado 'session' de string a UserProfile | null
 interface AuthContextData {
-  session: string | null;
-  userType: 'usuario' | 'cuidador' | null;
+  user: UserProfile | null; // Cambiamos 'session' por 'user' para más claridad
   isLoading: boolean;
-  database: SQLiteDatabase | null;
-  setSession: (session: string | null, type?: 'usuario' | 'cuidador') => void;
+  setUser: (user: UserProfile | null) => void; // Cambiamos 'setSession' por 'setUser'
 }
 
 const AuthContext = createContext<AuthContextData>({
-  session: null,
-  userType: null,
+  user: null,
   isLoading: true,
-  database: null,
-  setSession: () => {},
+  setUser: () => {},
 });
 
 export function useAuth() {
   return useContext(AuthContext);
 }
 
+// El almacenamiento seguro no cambia
 const storage = {
-  getItem: (key: string) => Platform.OS === 'web' ? AsyncStorage.getItem(key) : SecureStore.getItemAsync(key),
-  setItem: (key: string, value: string) => Platform.OS === 'web' ? AsyncStorage.setItem(key, value) : SecureStore.setItemAsync(key, value),
-  deleteItem: (key: string) => Platform.OS === 'web' ? AsyncStorage.removeItem(key) : SecureStore.deleteItemAsync(key),
+  getItem: (key: string) => SecureStore.getItemAsync(key),
+  setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
+  deleteItem: (key: string) => SecureStore.deleteItemAsync(key),
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<string | null>(null);
-  const [userType, setUserType] = useState<'usuario' | 'cuidador' | null>(null);
-  const [database, setDatabase] = useState<SQLiteDatabase | null>(null);
+  const [user, setUserState] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    async function loadData() {
+    async function loadUserFromStorage() {
       try {
-        const dbConnection = await db.initializeDatabase();
-        setDatabase(dbConnection);
-
-        // Cargar sesión y tipo de usuario almacenados
-        const storedSession = await storage.getItem('session_token');
-        const storedUserType = await storage.getItem('user_type') as 'usuario' | 'cuidador' | null;
-        
-        if (storedSession) {
-          setSession(storedSession);
-          setUserType(storedUserType || 'usuario');
+        const storedUser = await storage.getItem('user_session');
+        if (storedUser) {
+          setUserState(JSON.parse(storedUser)); // El usuario se guarda como un objeto JSON
         }
-
       } catch (e) {
-        console.error("Failed to load data or database", e);
+        console.error("Failed to load user from storage", e);
       } finally {
         setIsLoading(false);
       }
     }
-    loadData();
+    loadUserFromStorage();
   }, []);
 
-  const handleSetSession = async (token: string | null, type: 'usuario' | 'cuidador' = 'usuario') => {
-    setSession(token);
-    setUserType(type);
-    if (token) {
-      await storage.setItem('session_token', token);
-      await storage.setItem('user_type', type);
+  const handleSetUser = async (user: UserProfile | null) => {
+    setUserState(user);
+    if (user) {
+      // Guardamos el objeto de usuario completo como un string JSON
+      await storage.setItem('user_session', JSON.stringify(user));
     } else {
-      await storage.deleteItem('session_token');
-      await storage.deleteItem('user_type');
+      await storage.deleteItem('user_session');
     }
   };
 
   return (
-    <AuthContext.Provider value={{ session, userType, isLoading, database, setSession: handleSetSession }}>
+    <AuthContext.Provider value={{ user, isLoading, setUser: handleSetUser }}>
       {children}
     </AuthContext.Provider>
   );

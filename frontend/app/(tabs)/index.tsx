@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { useAuth } from "../../context/AuthContext";
+import { usePatient } from "../../context/PatientContext";
 import * as apiService from "../../services/apiService";
 import * as NotificationService from "../../services/notificationService";
 import { Bell, CheckCircle, Clock } from "lucide-react-native";
@@ -20,43 +21,51 @@ type NextDoseState = Omit<apiService.NextDose, "triggerDate"> & {
 };
 
 export default function HomeScreen() {
-  const { session } = useAuth();
+  const { user } = useAuth();
+  const { selectedPatient } = usePatient();
+  
   const [nextDose, setNextDose] = useState<NextDoseState | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Se ejecuta solo una vez cuando el componente se monta por primera vez.
+  // Pide permisos de notificación solo una vez
   useEffect(() => {
     NotificationService.requestNotificationPermissions();
   }, []);
 
   const loadNextDoseFromServer = useCallback(async () => {
+    const patientIdToShow = user?.role === 'CAREGIVER' ? selectedPatient?.id : user?.id;
+
+    if ((user?.role === 'CAREGIVER' && !selectedPatient) || !patientIdToShow) {
+      setNextDose(null);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     try {
-      if (session) {
-        const nextDoseFromServer = await apiService.fetchNextDose(session);
-        await NotificationService.scheduleNextDoseNotification(
-          nextDoseFromServer
-        );
-        if (nextDoseFromServer) {
-          setNextDose({
-            ...nextDoseFromServer,
-            triggerDate: new Date(nextDoseFromServer.triggerDate),
-          });
-        } else {
-          setNextDose(null);
-        }
+      const nextDoseFromServer = await apiService.fetchNextDose(patientIdToShow);
+      
+      console.log(" index.tsx | 1. Recibido de apiService:", nextDoseFromServer);
+      // La notificación se programa con la fecha UTC, el servicio se encarga del resto
+      await NotificationService.scheduleNextDoseNotification(nextDoseFromServer);
+      
+      if (nextDoseFromServer) {
+        setNextDose({
+          ...nextDoseFromServer,
+          // Convertimos el string UTC a un objeto Date. Este objeto es la "verdad universal".
+          triggerDate: new Date(nextDoseFromServer.triggerDate),
+        });
+      } else {
+        setNextDose(null);
       }
     } catch (error) {
       console.error("Error al cargar y programar la próxima dosis:", error);
-      Alert.alert(
-        "Error de Red",
-        "No se pudo obtener la información del servidor."
-      );
+      Alert.alert("Error de Red", "No se pudo obtener la información del servidor.");
     } finally {
       setIsLoading(false);
     }
-  }, [session]);
+  }, [user, selectedPatient]);
 
   useFocusEffect(
     useCallback(() => {
@@ -65,23 +74,11 @@ export default function HomeScreen() {
   );
 
   const handleMarkAsTaken = async () => {
-    console.log("--- INICIO DEPURACIÓN: handleMarkAsTaken ---");
-    console.log("1. Botón 'Ya lo tomé' presionado.");
+    const patientIdToShow = user?.role === 'CAREGIVER' ? selectedPatient?.id : user?.id;
+    if (!nextDose || !patientIdToShow || isSubmitting) return;
 
-    if (!nextDose || !session || isSubmitting) {
-      console.log("2. La función se detuvo en la validación inicial.");
-      console.log(`- ¿Existe nextDose?: ${!!nextDose}`);
-      console.log(`- ¿Existe session?: ${!!session}`);
-      console.log(`- ¿Está enviando?: ${isSubmitting}`);
-      console.log("--- FIN DEPURACIÓN ---");
-      return;
-    }
-
-    console.log("2. La validación inicial fue exitosa.");
     setIsSubmitting(true);
-
     try {
-      console.log("3. Intentando crear el payload para la API.");
       const payload: apiService.NewIntakePayload = {
         medicationId: nextDose.medication.id,
         scheduleId: nextDose.schedule.id,
@@ -89,35 +86,24 @@ export default function HomeScreen() {
         action: "TAKEN",
         actionAt: new Date().toISOString(),
       };
-      console.log("4. Payload creado. Enviando a la API...", payload);
-
       const success = await apiService.logIntake(payload);
-
-      console.log("5. La API respondió. ¿Éxito?", success);
-
       if (success) {
         Alert.alert("¡Bien hecho!", "Se ha registrado la toma.");
         await loadNextDoseFromServer();
       } else {
-        Alert.alert("Error", "No se pudo registrar la toma en el servidor.");
+        Alert.alert("Error", "No se pudo registrar la toma.");
       }
     } catch (error) {
-      console.error(
-        "ERROR: La llamada a la API falló dentro del bloque try-catch.",
-        error
-      );
-      Alert.alert(
-        "Error",
-        "Ocurrió un error al registrar la toma. Revisa la consola."
-      );
+      console.error("Error en handleMarkAsTaken:", error);
     } finally {
       setIsSubmitting(false);
-      console.log("--- FIN DEPURACIÓN ---");
     }
   };
 
   const handlePostpone = async () => {
-    if (!nextDose || !session || isSubmitting) return;
+    const patientIdToShow = user?.role === 'CAREGIVER' ? selectedPatient?.id : user?.id;
+    if (!nextDose || !patientIdToShow || isSubmitting) return;
+
     setIsSubmitting(true);
     try {
       const payload: apiService.NewIntakePayload = {
@@ -129,13 +115,10 @@ export default function HomeScreen() {
       };
       const success = await apiService.logIntake(payload);
       if (success) {
-        Alert.alert(
-          "Recordatorio pospuesto",
-          "La próxima toma ha sido actualizada."
-        );
+        Alert.alert("Recordatorio pospuesto", "La próxima toma ha sido actualizada.");
         await loadNextDoseFromServer();
       } else {
-        Alert.alert("Error", "No se pudo registrar la acción.");
+        Alert.alert("Error", "No se pudo posponer la toma.");
       }
     } catch (error) {
       console.error("Error en handlePostpone:", error);
@@ -153,12 +136,24 @@ export default function HomeScreen() {
     );
   }
 
+  // Si es un cuidador y no ha seleccionado paciente, muestra un mensaje
+  if (user?.role === 'CAREGIVER' && !selectedPatient) {
+    return (
+        <SafeAreaView style={styles.container}>
+            <View style={styles.header}>
+                <Text style={styles.greeting}>Modo Cuidador</Text>
+                <Text style={styles.subtitle}>Ve a la pestaña 'Pacientes' para seleccionar un perfil y ver su próxima dosis.</Text>
+            </View>
+        </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView>
         <View style={styles.header}>
           <Text style={styles.greeting}>¡Buenos días!</Text>
-          <Text style={styles.subtitle}>Es hora de cuidar su salud</Text>
+          <Text style={styles.subtitle}>Es hora de cuidar tu salud</Text>
         </View>
 
         {nextDose ? (
@@ -172,7 +167,7 @@ export default function HomeScreen() {
             <View style={styles.timeContainer}>
               <Clock size={20} color="#4B5563" />
               <Text style={styles.medTime}>
-                {/* toLocaleTimeString() automáticamente usa la zona horaria del dispositivo */}
+                {/* ¡CORRECCIÓN DE HORA! toLocaleTimeString() muestra la hora local */}
                 {nextDose.triggerDate.toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -181,24 +176,17 @@ export default function HomeScreen() {
             </View>
             <View style={styles.actionsContainer}>
               <TouchableOpacity
-                style={[
-                  styles.takenButton,
-                  isSubmitting && styles.buttonDisabled,
-                ]}
+                style={[ styles.takenButton, (isSubmitting || user?.role === 'CAREGIVER') && styles.buttonDisabled ]}
                 onPress={handleMarkAsTaken}
-                disabled={isSubmitting}
+                disabled={isSubmitting || user?.role === 'CAREGIVER'}
               >
                 <CheckCircle size={20} color="#FFFFFF" />
                 <Text style={styles.actionButtonText}>Ya lo tomé</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[
-                  styles.postponeButton,
-                  (isSubmitting || nextDose?.isPostponed) &&
-                    styles.buttonDisabled,
-                ]}
+                style={[ styles.postponeButton, (isSubmitting || nextDose?.isPostponed || user?.role === 'CAREGIVER') && styles.buttonDisabled ]}
                 onPress={handlePostpone}
-                disabled={isSubmitting || nextDose?.isPostponed}
+                disabled={isSubmitting || nextDose?.isPostponed || user?.role === 'CAREGIVER'}
               >
                 <Clock size={20} color="#374151" />
                 <Text style={styles.actionButtonTextDark}>Posponer</Text>

@@ -4,22 +4,18 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link, useFocusEffect } from 'expo-router';
 import { Plus, Pill, Clock, Pencil, Trash2 } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+import { usePatient } from '../../context/PatientContext';
 import * as apiService from '../../services/apiService';
 
 type MedicationListItem = apiService.MedicationWithSchedules;
 
-/**
- * Convierte una hora UTC (ej: "01:10") a la hora local del dispositivo (ej: "22:10")
- */
 const convertUTCTimeToLocalString = (utcTime: string): string => {
   if (!/^\d{2}:\d{2}$/.test(utcTime)) return utcTime;
   const [hours, minutes] = utcTime.split(':').map(Number);
   const date = new Date();
   date.setUTCHours(hours, minutes, 0, 0);
-
   const localHours = String(date.getHours()).padStart(2, '0');
   const localMinutes = String(date.getMinutes()).padStart(2, '0');
-  
   return `${localHours}:${localMinutes}`;
 };
 
@@ -73,13 +69,20 @@ const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListIte
 export default function MedicamentosScreen() {
   const [medicamentos, setMedicamentos] = useState<MedicationListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const { session } = useAuth();
+  const { user } = useAuth();
+  const { selectedPatient } = usePatient();
 
   const cargarMedicamentos = useCallback(async () => {
-    if (!session) return;
+    const patientIdToShow = user?.role === 'CAREGIVER' ? selectedPatient?.id : user?.id;
+
+    if (!patientIdToShow) {
+        setIsLoading(false);
+        return;
+    }
+
     setIsLoading(true);
     try {
-      const baseMeds = await apiService.fetchMedicationsByPatient(session);
+      const baseMeds = await apiService.fetchMedicationsByPatient(patientIdToShow);
       
       const medsWithSchedules = await Promise.all(
         baseMeds.map(async (med) => {
@@ -94,7 +97,7 @@ export default function MedicamentosScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [session]);
+  }, [user, selectedPatient]);
 
   useFocusEffect(
     useCallback(() => {
