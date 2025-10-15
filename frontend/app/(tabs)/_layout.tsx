@@ -1,11 +1,12 @@
 import { Tabs } from 'expo-router';
-import { History, Home, MessageCircle, Pill, User, Users } from 'lucide-react-native';
+import { Bot, History, Home, Pill, User, Users } from 'lucide-react-native'; // Cambié MessageCircle por Bot
 import React from 'react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function TabLayout() {
-  const { userType } = useAuth();
-  const isCuidador = userType === 'cuidador';
+  // En tu AuthContext, asegúrate de que el rol se guarde como 'PATIENT' o 'CAREGIVER'
+  const { user } = useAuth(); 
+  const isCaregiver = user?.role === 'CAREGIVER';
 
   return (
     <Tabs
@@ -23,6 +24,8 @@ export default function TabLayout() {
           fontWeight: '600',
         },
       }}>
+      
+      {/* Pestañas Comunes para ambos roles */}
       <Tabs.Screen
         name="index"
         options={{
@@ -30,24 +33,35 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <Home size={28} color={color} />,
         }}
       />
-      {!isCuidador && (
-        <Tabs.Screen
-          name="medicamentos"
-          options={{
-            title: 'Medicamentos',
-            tabBarIcon: ({ color }) => <Pill size={28} color={color} />,
-          }}
-        />
+      
+      {/* Pestañas Exclusivas para Pacientes */}
+      {!isCaregiver && (
+        <>
+          <Tabs.Screen
+            name="medicamentos"
+            options={{
+              title: 'Medicamentos',
+              tabBarIcon: ({ color }) => <Pill size={28} color={color} />,
+            }}
+          />
+          <Tabs.Screen
+            name="familiares"
+            options={{
+              title: 'Familiares',
+              tabBarIcon: ({ color }) => <Users size={28} color={color} />,
+            }}
+          />
+          <Tabs.Screen
+            name="asistente" // Esta ya está aquí y es correcta
+            options={{
+              title: 'Asistente',
+              tabBarIcon: ({ color }) => <Bot size={28} color={color} />,
+            }}
+          />
+        </>
       )}
-      {!isCuidador && (
-        <Tabs.Screen
-          name="familiares"
-          options={{
-            title: 'Familiares',
-            tabBarIcon: ({ color }) => <Users size={28} color={color} />,
-          }}
-        />
-      )}
+
+      {/* Pestañas Comunes para ambos roles */}
       <Tabs.Screen
         name="historial"
         options={{
@@ -55,15 +69,6 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <History size={28} color={color} />,
         }}
       />
-      {!isCuidador && (
-        <Tabs.Screen
-          name="asistente"
-          options={{
-            title: 'Asistente',
-            tabBarIcon: ({ color }) => <MessageCircle size={28} color={color} />,
-          }}
-        />
-      )}
       <Tabs.Screen
         name="perfil"
         options={{

@@ -365,3 +365,30 @@ export const linkCaregiverByEmail = async (patientId: string, caregiverEmail: st
   }
   return await response.json();
 };
+
+/**
+ * Envía un mensaje al endpoint del chatbot en el backend y devuelve la respuesta de la IA.
+ */
+export const sendMessageToChatbot = async (message: string, patientId: string): Promise<{ response: string }> => {
+  if (!message || !patientId) {
+    throw new Error('El mensaje y el ID del paciente son requeridos.');
+  }
+
+  const requestUrl = `${API_URL}/chatbot/interpret`;
+  try {
+    const response = await fetch(requestUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, patientId }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'El chatbot no pudo responder.');
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error en sendMessageToChatbot:', error);
+    throw error;
+  }
+};

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "tsc",
+    "build": "npx prisma generate && tsc",
     "start": "node dist/index.js",
     "prisma:gen": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",
+    "axios": "^1.12.2",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

@@ -651,8 +651,102 @@ app.post("/sync/full", async (req: Request, res: Response) => {
   }
 });
 
+// ================= Chatbot =================
+// Actualiza el import para traer las nuevas funciones
+import {
+  classifyIntent,
+  extractMedicationDetails,
+  getConversationalResponse,
+} from "./services/chatbotService";
+
+app.post("/chatbot/interpret", async (req: Request, res: Response) => {
+  const { message, patientId } = req.body as { message?: string; patientId?: string };
+
+  if (!message || !patientId) {
+    return res.status(400).json({ error: "message y patientId son requeridos." });
+  }
+
+  try {
+    // --- PASO 1: Clasificar la intención del usuario ---
+    const intent = await classifyIntent(message);
+
+    console.log("🤖 Intención clasificada por la IA:", intent);
+
+    // --- PASO 2: Actuar según la intención ---
+    switch (intent) {
+      case 'ADD_MEDICATION':
+        const details = await extractMedicationDetails(message);
+
+        if (!details || !details.medication?.name || !details.schedules?.[0]?.time) {
+          return res.json({
+            response: "Entiendo que quieres agregar un medicamento, pero no capté todos los detalles. ¿Puedes intentarlo de nuevo? Por ejemplo: 'Añade aspirina 100mg todos los días a las 8 am'."
+          });
+        }
+
+        const { medication: medData, schedules: schedulesData } = details;
+        const newMedication = await prisma.medication.create({
+          data: { patientId, name: medData.name, dosage: medData.dosage },
+        });
+
+        for (const schedule of schedulesData) {
+          const [hour, minute] = schedule.time.split(':').map(Number);
+          const localDate = new Date();
+          localDate.setHours(hour, minute, 0, 0);
+          const utcHour = localDate.getUTCHours().toString().padStart(2, '0');
+          const utcMinute = localDate.getUTCMinutes().toString().padStart(2, '0');
+          const timeInUTC = `${utcHour}:${utcMinute}`;
+          await prisma.schedule.create({
+            data: { medicationId: newMedication.id, time: timeInUTC, frequencyType: schedule.frequencyType },
+          });
+        }
+
+        const confirmationMessage = `¡Listo! Registré **${newMedication.name} ${newMedication.dosage || ''}**.`;
+        return res.json({ response: confirmationMessage });
+
+      case 'GREETING':
+      case 'GENERAL_QUESTION':
+        const conversationalResponse = await getConversationalResponse(message);
+        return res.json({ response: conversationalResponse });
+
+      case 'UNKNOWN':
+      default:
+        return res.json({
+          response: "No estoy seguro de haber entendido. Recuerda que puedo ayudarte a registrar tus medicamentos."
+        });
+    }
+  } catch (error) {
+    console.error("Error en el endpoint del chatbot:", error);
+    res.status(500).json({ error: "Ocurrió un error al procesar tu solicitud." });
+  }
+});
+
+// ================= RUTA DE PRUEBA PARA LISTAR MODELOS =================
+app.get("/test-models", async (_req: Request, res: Response) => {
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  const listModelsUrl = `https://generativelanguage.googleapis.com/v1/models?key=${GEMINI_API_KEY}`;
+
+  try {
+    // Usaremos la librería 'fetch' que ya viene integrada en Node.js
+    const response = await fetch(listModelsUrl);
+    const data = await response.json();
+
+    // Imprimimos la respuesta en la consola del backend para verla
+    console.log("========= LISTA DE MODELOS DISPONIBLES =========");
+    console.log(JSON.stringify(data, null, 2));
+    console.log("================================================");
+
+    // También la devolvemos para que la veas en el navegador
+    res.json(data);
+
+  } catch (error) {
+    console.error("Error al listar los modelos:", error);
+    res.status(500).json({ error: "No se pudo obtener la lista de modelos." });
+  }
+});
+
 // ================= Server =================
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`API listening on port ${PORT}`);
 });
+
