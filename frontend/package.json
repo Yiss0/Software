@@ -48,5 +48,8 @@
     "babel-plugin-module-resolver": "^5.0.0",
     "typescript": "~5.3.3"
   },
+  "overrides": {
+    "react-native-keyboard-controller": "1.9.1"
+  },
   "private": true
 }
