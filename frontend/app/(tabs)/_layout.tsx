@@ -1,10 +1,9 @@
 import { Tabs } from 'expo-router';
-import { Bot, History, Home, Pill, User, Users } from 'lucide-react-native'; // Cambié MessageCircle por Bot
+import { Bot, History, Home, Pill, User, Users } from 'lucide-react-native';
 import React from 'react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function TabLayout() {
-  // En tu AuthContext, asegúrate de que el rol se guarde como 'PATIENT' o 'CAREGIVER'
   const { user } = useAuth(); 
   const isCaregiver = user?.role === 'CAREGIVER';
 
@@ -25,7 +24,7 @@ export default function TabLayout() {
         },
       }}>
       
-      {/* Pestañas Comunes para ambos roles */}
+      {/* 1. Inicio */}
       <Tabs.Screen
         name="index"
         options={{
@@ -34,34 +33,18 @@ export default function TabLayout() {
         }}
       />
       
-      {/* Pestañas Exclusivas para Pacientes */}
+      {/* 2. Medicamentos (Solo Paciente) */}
       {!isCaregiver && (
-        <>
-          <Tabs.Screen
-            name="medicamentos"
-            options={{
-              title: 'Medicamentos',
-              tabBarIcon: ({ color }) => <Pill size={28} color={color} />,
-            }}
-          />
-          <Tabs.Screen
-            name="familiares"
-            options={{
-              title: 'Familiares',
-              tabBarIcon: ({ color }) => <Users size={28} color={color} />,
-            }}
-          />
-          <Tabs.Screen
-            name="asistente" // Esta ya está aquí y es correcta
-            options={{
-              title: 'Asistente',
-              tabBarIcon: ({ color }) => <Bot size={28} color={color} />,
-            }}
-          />
-        </>
+        <Tabs.Screen
+          name="medicamentos"
+          options={{
+            title: 'Medicamentos',
+            tabBarIcon: ({ color }) => <Pill size={28} color={color} />,
+          }}
+        />
       )}
 
-      {/* Pestañas Comunes para ambos roles */}
+      {/* 3. Historial */}
       <Tabs.Screen
         name="historial"
         options={{
@@ -69,6 +52,30 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <History size={28} color={color} />,
         }}
       />
+      
+      {/* 4. Familiares (Solo Paciente) */}
+      {!isCaregiver && (
+        <Tabs.Screen
+          name="familiares"
+          options={{
+            title: 'Familiares',
+            tabBarIcon: ({ color }) => <Users size={28} color={color} />,
+          }}
+        />
+      )}
+
+      {/* 5. Asistente (Solo Paciente) */}
+      {!isCaregiver && (
+          <Tabs.Screen
+            name="asistente"
+            options={{
+              title: 'Asistente',
+              tabBarIcon: ({ color }) => <Bot size={28} color={color} />,
+            }}
+          />
+      )}
+
+      {/* 6. Perfil */}
       <Tabs.Screen
         name="perfil"
         options={{
