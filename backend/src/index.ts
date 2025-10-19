@@ -698,7 +698,7 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
 
       // --- ¡NUEVA LÓGICA AQUÍ! ---
       case 'CONFIRM_INTAKE': {
-        // Reutilizamos la lógica del endpoint 'next-dose' para encontrar la próxima toma.
+        // 1. Obtenemos todos los medicamentos y sus horarios activos
         const meds = await prisma.medication.findMany({
             where: { patientId, active: true, deletedAt: null },
             include: { schedules: { where: { active: true } } },
@@ -707,27 +707,36 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
         if (!meds.length) {
             return res.json({ response: "No tienes medicamentos programados para registrar una toma." });
         }
-        
-        // (Aquí iría toda la lógica de getNextTriggerDate y cálculo de próximas dosis)
-        // Por simplicidad, vamos a registrar la primera dosis programada que encontremos.
-        // En una versión avanzada, buscaríamos la más cercana al tiempo actual.
-        const firstMedWithSchedule = meds.find(m => m.schedules.length > 0);
 
-        if (!firstMedWithSchedule) {
-            return res.json({ response: "No encontré horarios activos para tus medicamentos." });
+        // 2. Calculamos todas las próximas dosis posibles
+        const upcomingDoses: NextDoseResponse[] = [];
+        for (const med of meds) {
+            for (const s of med.schedules) {
+                const triggerDate = getNextTriggerDate(s); // Usamos la función que ya tenías
+                if (triggerDate) {
+                    upcomingDoses.push({ medication: med, schedule: s, triggerDate });
+                }
+            }
         }
-        
-        const medicationToLog = firstMedWithSchedule;
-        const scheduleToLog = firstMedWithSchedule.schedules[0];
 
-        // Creamos el registro en el historial de tomas (IntakeLog)
+        if (!upcomingDoses.length) {
+            return res.json({ response: "No encontré ninguna próxima dosis programada." });
+        }
+
+        // 3. Ordenamos para encontrar la más cercana en el tiempo
+        upcomingDoses.sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime());
+        
+        const nextDoseToLog = upcomingDoses[0];
+        const { medication: medicationToLog, schedule: scheduleToLog, triggerDate: scheduledFor } = nextDoseToLog;
+
+        // 4. Creamos el registro en el historial para el medicamento correcto
         await prisma.intakeLog.create({
           data: {
             medicationId: medicationToLog.id,
             scheduleId: scheduleToLog.id,
-            action: "CONFIRMED", // O 'TAKEN', según tu modelo
-            actionAt: new Date(),
-            scheduledFor: new Date(), // Idealmente, esto sería la hora programada
+            action: "CONFIRMED",
+            actionAt: new Date(), // La hora actual en UTC
+            scheduledFor: scheduledFor, // La hora en que estaba programada la toma
           },
         });
 
