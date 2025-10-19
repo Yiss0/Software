@@ -81,7 +81,8 @@ Ahora, analiza este mensaje: "${userMessage}"`;
     const response = await axios.post(GEMINI_URL, {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: { 
-        responseMimeType: "application.json",
+        // --- ¡CORRECCIÓN AQUÍ! ---
+        response_mime_type: "application/json",
       }
     }, axiosConfig);
 
@@ -94,7 +95,6 @@ Ahora, analiza este mensaje: "${userMessage}"`;
     const resultText = candidates[0].content.parts[0].text;
     const resultJson = JSON.parse(resultText);
 
-    // Verificación extra por si la IA devuelve 'null' dentro del JSON
     if (!resultJson || !resultJson.medication) {
         return null;
     }
