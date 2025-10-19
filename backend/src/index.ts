@@ -667,12 +667,9 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
   }
 
   try {
-    // --- PASO 1: Clasificar la intención del usuario ---
     const intent = await classifyIntent(message);
-
     console.log("🤖 Intención clasificada por la IA:", intent);
 
-    // --- PASO 2: Actuar según la intención ---
     switch (intent) {
       case 'ADD_MEDICATION':
         const details = await extractMedicationDetails(message);
@@ -683,24 +680,40 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
           });
         }
 
+        // --- LÓGICA DE GUARDADO AÑADIDA AQUÍ ---
         const { medication: medData, schedules: schedulesData } = details;
+
+        // 1. Crear el medicamento en la base de datos
         const newMedication = await prisma.medication.create({
-          data: { patientId, name: medData.name, dosage: medData.dosage },
+          data: {
+            patientId: patientId, // Usamos el ID del usuario
+            name: medData.name,
+            dosage: medData.dosage,
+            // La IA no extrae cantidad, podemos poner un valor por defecto o dejarlo nulo
+            quantity: 0, 
+          },
         });
 
+        // 2. Crear los horarios asociados al nuevo medicamento
         for (const schedule of schedulesData) {
+          // La IA nos devuelve la hora local, la convertimos a UTC antes de guardar
           const [hour, minute] = schedule.time.split(':').map(Number);
           const localDate = new Date();
           localDate.setHours(hour, minute, 0, 0);
           const utcHour = localDate.getUTCHours().toString().padStart(2, '0');
           const utcMinute = localDate.getUTCMinutes().toString().padStart(2, '0');
           const timeInUTC = `${utcHour}:${utcMinute}`;
+
           await prisma.schedule.create({
-            data: { medicationId: newMedication.id, time: timeInUTC, frequencyType: schedule.frequencyType },
+            data: {
+              medicationId: newMedication.id, // Enlazamos con el ID del medicamento creado
+              time: timeInUTC,
+              frequencyType: schedule.frequencyType,
+            },
           });
         }
 
-        const confirmationMessage = `¡Listo! Registré **${newMedication.name} ${newMedication.dosage || ''}**.`;
+        const confirmationMessage = `¡Listo! He registrado **${newMedication.name} ${newMedication.dosage || ''}** en tu lista de medicamentos.`;
         return res.json({ response: confirmationMessage });
 
       case 'GREETING':
