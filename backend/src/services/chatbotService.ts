@@ -59,31 +59,20 @@ export async function classifyIntent(userMessage: string): Promise<Intent> {
  * Función 2: Extrae detalles - VERSIÓN SIMPLIFICADA FINAL
  */
 export async function extractMedicationDetails(userMessage: string): Promise<MedicationDetails | null> {
-  const prompt = `Analiza el siguiente texto de un usuario para extraer los detalles de un medicamento. Tu única tarea es devolver un objeto JSON válido con la estructura: {"medication":{"name":"string","dosage":"string"},"schedules":[{"time":"HH:mm","frequencyType":"string"}]}.
+  const prompt = `Tu única tarea es analizar el texto del usuario y devolver un objeto JSON.
+La estructura debe ser: {"medication":{"name":"string","dosage":"string"},"schedules":[{"time":"HH:mm","frequencyType":"string"}]}.
+Tu respuesta DEBE SER ÚNICAMENTE el texto JSON, sin nada más. No incluyas "json" ni ninguna otra palabra.
 
-- El campo "name" debe ser solo el nombre del medicamento.
-- El campo "dosage" es opcional, pero si existe, debe incluir la unidad (ej: "500mg", "1g").
-- El campo "time" debe estar en formato 24 horas (ej: si el usuario dice "10 de la noche" debes usar "22:00").
-- El campo "frequencyType" debe ser "DAILY" si el usuario dice "todos los días" o no especifica una frecuencia.
-- Si no puedes extraer la información, devuelve null en el JSON.
-
-Ejemplo 1:
-Usuario: "agrega Losartán de 50mg todos los días a las 9pm"
-Tu Respuesta: {"medication":{"name":"Losartán","dosage":"50mg"},"schedules":[{"time":"21:00","frequencyType":"DAILY"}]}
-
-Ejemplo 2:
-Usuario: "Por favor, necesito registrar Paracetamol 1g para tomar cada día a las 10 de la noche"
-Tu Respuesta: {"medication":{"name":"Paracetamol","dosage":"1g"},"schedules":[{"time":"22:00","frequencyType":"DAILY"}]}
+Ejemplo:
+Usuario: "Por favor, agrega Paracetamol de 500mg todos los días a las 10 de la noche"
+Tu Respuesta: {"medication":{"name":"Paracetamol","dosage":"500mg"},"schedules":[{"time":"22:00","frequencyType":"DAILY"}]}
 
 Ahora, analiza este mensaje: "${userMessage}"`;
 
   try {
     const response = await axios.post(GEMINI_URL, {
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { 
-        // --- ¡CORRECCIÓN AQUÍ! ---
-        response_mime_type: "application/json",
-      }
+      // --- HEMOS ELIMINADO 'generationConfig' POR COMPLETO ---
     }, axiosConfig);
 
     const candidates = response.data.candidates;
@@ -93,7 +82,11 @@ Ahora, analiza este mensaje: "${userMessage}"`;
     }
 
     const resultText = candidates[0].content.parts[0].text;
-    const resultJson = JSON.parse(resultText);
+    
+    // Añadimos una limpieza por si la IA aun así añade los ```
+    const cleanedText = resultText.replace(/```json/g, '').replace(/```/g, '').trim();
+
+    const resultJson = JSON.parse(cleanedText);
 
     if (!resultJson || !resultJson.medication) {
         return null;
