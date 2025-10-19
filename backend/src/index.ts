@@ -697,18 +697,25 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
 
         // 2. Crear los horarios asociados al nuevo medicamento
         for (const schedule of schedulesData) {
-          // La IA nos devuelve la hora local, la convertimos a UTC antes de guardar
+          // La IA nos devuelve la hora en formato local de Chile (ej: 22:00)
           const [hour, minute] = schedule.time.split(':').map(Number);
-          const localDate = new Date();
-          localDate.setHours(hour, minute, 0, 0);
-          const utcHour = localDate.getUTCHours().toString().padStart(2, '0');
-          const utcMinute = localDate.getUTCMinutes().toString().padStart(2, '0');
+
+          // Creamos una fecha para hoy en UTC
+          const dateInUTC = new Date();
+          
+          // Le decimos que la hora extraída es de Chile (UTC-3) y la ajustamos a UTC.
+          // Para ir de CLT a UTC, sumamos 3 horas.
+          dateInUTC.setUTCHours(hour + 3, minute, 0, 0);
+
+          // Obtenemos la hora y minuto correctos en UTC
+          const utcHour = dateInUTC.getUTCHours().toString().padStart(2, '0');
+          const utcMinute = dateInUTC.getUTCMinutes().toString().padStart(2, '0');
           const timeInUTC = `${utcHour}:${utcMinute}`;
 
           await prisma.schedule.create({
             data: {
-              medicationId: newMedication.id, // Enlazamos con el ID del medicamento creado
-              time: timeInUTC,
+              medicationId: newMedication.id,
+              time: timeInUTC, // Guardamos la hora correctamente convertida a UTC
               frequencyType: schedule.frequencyType,
             },
           });
