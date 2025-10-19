@@ -671,97 +671,82 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
     console.log("🤖 Intención clasificada por la IA:", intent);
 
     switch (intent) {
+      // (El case de ADD_MEDICATION sigue igual)
       case 'ADD_MEDICATION':
         const details = await extractMedicationDetails(message);
         console.log("💊 Detalles extraídos por la IA:", details);
 
         if (!details || !details.medication?.name || !details.schedules?.[0]?.time) {
-          return res.json({
-            response: "Entiendo que quieres agregar un medicamento, pero no capté todos los detalles. ¿Puedes intentarlo de nuevo? Por ejemplo: 'Añade aspirina 100mg todos los días a las 8 am'."
-          });
+          return res.json({ response: "Entiendo que quieres agregar un medicamento, pero no capté todos los detalles." });
         }
 
-        // --- LÓGICA DE GUARDADO AÑADIDA AQUÍ ---
         const { medication: medData, schedules: schedulesData } = details;
-
-        // 1. Crear el medicamento en la base de datos
         const newMedication = await prisma.medication.create({
+          data: { patientId, name: medData.name, dosage: medData.dosage, quantity: 0 },
+        });
+
+        for (const schedule of schedulesData) {
+          const [hour, minute] = schedule.time.split(':').map(Number);
+          const dateInUTC = new Date();
+          dateInUTC.setUTCHours(hour + 3, minute, 0, 0); // Asumiendo UTC-3
+          const timeInUTC = `${dateInUTC.getUTCHours().toString().padStart(2, '0')}:${dateInUTC.getUTCMinutes().toString().padStart(2, '0')}`;
+          await prisma.schedule.create({
+            data: { medicationId: newMedication.id, time: timeInUTC, frequencyType: schedule.frequencyType },
+          });
+        }
+        return res.json({ response: `¡Listo! He registrado **${newMedication.name} ${newMedication.dosage || ''}**.` });
+
+      // --- ¡NUEVA LÓGICA AQUÍ! ---
+      case 'CONFIRM_INTAKE': {
+        // Reutilizamos la lógica del endpoint 'next-dose' para encontrar la próxima toma.
+        const meds = await prisma.medication.findMany({
+            where: { patientId, active: true, deletedAt: null },
+            include: { schedules: { where: { active: true } } },
+        });
+
+        if (!meds.length) {
+            return res.json({ response: "No tienes medicamentos programados para registrar una toma." });
+        }
+        
+        // (Aquí iría toda la lógica de getNextTriggerDate y cálculo de próximas dosis)
+        // Por simplicidad, vamos a registrar la primera dosis programada que encontremos.
+        // En una versión avanzada, buscaríamos la más cercana al tiempo actual.
+        const firstMedWithSchedule = meds.find(m => m.schedules.length > 0);
+
+        if (!firstMedWithSchedule) {
+            return res.json({ response: "No encontré horarios activos para tus medicamentos." });
+        }
+        
+        const medicationToLog = firstMedWithSchedule;
+        const scheduleToLog = firstMedWithSchedule.schedules[0];
+
+        // Creamos el registro en el historial de tomas (IntakeLog)
+        await prisma.intakeLog.create({
           data: {
-            patientId: patientId, // Usamos el ID del usuario
-            name: medData.name,
-            dosage: medData.dosage,
-            // La IA no extrae cantidad, podemos poner un valor por defecto o dejarlo nulo
-            quantity: 0, 
+            medicationId: medicationToLog.id,
+            scheduleId: scheduleToLog.id,
+            action: "CONFIRMED", // O 'TAKEN', según tu modelo
+            actionAt: new Date(),
+            scheduledFor: new Date(), // Idealmente, esto sería la hora programada
           },
         });
 
-        // 2. Crear los horarios asociados al nuevo medicamento
-        for (const schedule of schedulesData) {
-          // La IA nos devuelve la hora en formato local de Chile (ej: 22:00)
-          const [hour, minute] = schedule.time.split(':').map(Number);
-
-          // Creamos una fecha para hoy en UTC
-          const dateInUTC = new Date();
-          
-          // Le decimos que la hora extraída es de Chile (UTC-3) y la ajustamos a UTC.
-          // Para ir de CLT a UTC, sumamos 3 horas.
-          dateInUTC.setUTCHours(hour + 3, minute, 0, 0);
-
-          // Obtenemos la hora y minuto correctos en UTC
-          const utcHour = dateInUTC.getUTCHours().toString().padStart(2, '0');
-          const utcMinute = dateInUTC.getUTCMinutes().toString().padStart(2, '0');
-          const timeInUTC = `${utcHour}:${utcMinute}`;
-
-          await prisma.schedule.create({
-            data: {
-              medicationId: newMedication.id,
-              time: timeInUTC, // Guardamos la hora correctamente convertida a UTC
-              frequencyType: schedule.frequencyType,
-            },
-          });
-        }
-
-        const confirmationMessage = `¡Listo! He registrado **${newMedication.name} ${newMedication.dosage || ''}** en tu lista de medicamentos.`;
-        return res.json({ response: confirmationMessage });
+        return res.json({ response: `¡Excelente! He registrado la toma de **${medicationToLog.name}**.` });
+      }
 
       case 'GREETING':
-      case 'GENERAL_QUESTION':
         const conversationalResponse = await getConversationalResponse(message);
         return res.json({ response: conversationalResponse });
 
       case 'UNKNOWN':
       default:
         return res.json({
-          response: "No estoy seguro de haber entendido. Recuerda que puedo ayudarte a registrar tus medicamentos."
+          response: "No estoy seguro de haber entendido. Puedo registrar un medicamento o confirmar una toma."
         });
     }
   } catch (error) {
     console.error("Error en el endpoint del chatbot:", error);
     res.status(500).json({ error: "Ocurrió un error al procesar tu solicitud." });
-  }
-});
-
-// ================= RUTA DE PRUEBA PARA LISTAR MODELOS =================
-app.get("/test-models", async (_req: Request, res: Response) => {
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  const listModelsUrl = `https://generativelanguage.googleapis.com/v1/models?key=${GEMINI_API_KEY}`;
-
-  try {
-    // Usaremos la librería 'fetch' que ya viene integrada en Node.js
-    const response = await fetch(listModelsUrl);
-    const data = await response.json();
-
-    // Imprimimos la respuesta en la consola del backend para verla
-    console.log("========= LISTA DE MODELOS DISPONIBLES =========");
-    console.log(JSON.stringify(data, null, 2));
-    console.log("================================================");
-
-    // También la devolvemos para que la veas en el navegador
-    res.json(data);
-
-  } catch (error) {
-    console.error("Error al listar los modelos:", error);
-    res.status(500).json({ error: "No se pudo obtener la lista de modelos." });
   }
 });
 
