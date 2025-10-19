@@ -705,38 +705,63 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
         });
 
         if (!meds.length) {
-            return res.json({ response: "No tienes medicamentos programados para registrar una toma." });
+            return res.json({ response: "No tienes medicamentos programados." });
         }
 
-        // 2. Calculamos todas las próximas dosis posibles
+        // 2. Buscamos en el historial las tomas YA REGISTRADAS hoy
+        const startOfDay = new Date();
+        startOfDay.setUTCHours(0, 0, 0, 0);
+        const endOfDay = new Date();
+        endOfDay.setUTCHours(23, 59, 59, 999);
+
+        const todaysLogs = await prisma.intakeLog.findMany({
+            where: {
+                medication: { patientId },
+                actionAt: { gte: startOfDay, lte: endOfDay },
+                // Excluimos las pospuestas para que puedan ser tomadas
+                NOT: { action: 'POSTPONED' } 
+            },
+        });
+        
+        // 3. Calculamos todas las próximas dosis posibles
         const upcomingDoses: NextDoseResponse[] = [];
         for (const med of meds) {
             for (const s of med.schedules) {
-                const triggerDate = getNextTriggerDate(s); // Usamos la función que ya tenías
-                if (triggerDate) {
+                const triggerDate = getNextTriggerDate(s);
+                if (!triggerDate) continue;
+
+                // 4. VERIFICACIÓN CLAVE: ¿Ya existe un registro para esta dosis hoy?
+                const logMatch = todaysLogs.find(
+                    (log) => log.medicationId === med.id && 
+                             new Date(log.scheduledFor).getUTCHours() === triggerDate.getUTCHours() &&
+                             new Date(log.scheduledFor).getUTCMinutes() === triggerDate.getUTCMinutes()
+                );
+
+                // Si NO hay un registro coincidente, entonces es una dosis pendiente
+                if (!logMatch) {
                     upcomingDoses.push({ medication: med, schedule: s, triggerDate });
                 }
             }
         }
 
         if (!upcomingDoses.length) {
-            return res.json({ response: "No encontré ninguna próxima dosis programada." });
+            return res.json({ response: "¡Excelente! Parece que ya estás al día con todas tus dosis de hoy." });
         }
 
-        // 3. Ordenamos para encontrar la más cercana en el tiempo
+        // 5. Ordenamos para encontrar la dosis pendiente más cercana
         upcomingDoses.sort((a, b) => a.triggerDate.getTime() - b.triggerDate.getTime());
         
         const nextDoseToLog = upcomingDoses[0];
         const { medication: medicationToLog, schedule: scheduleToLog, triggerDate: scheduledFor } = nextDoseToLog;
 
-        // 4. Creamos el registro en el historial para el medicamento correcto
+        // 6. Creamos el registro en el historial para el medicamento correcto
         await prisma.intakeLog.create({
           data: {
             medicationId: medicationToLog.id,
             scheduleId: scheduleToLog.id,
             action: "CONFIRMED",
-            actionAt: new Date(), // La hora actual en UTC
-            scheduledFor: scheduledFor, // La hora en que estaba programada la toma
+            actionAt: new Date(),
+            scheduledFor: scheduledFor,
           },
         });
 
