@@ -673,6 +673,7 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
     switch (intent) {
       case 'ADD_MEDICATION':
         const details = await extractMedicationDetails(message);
+        console.log("💊 Detalles extraídos por la IA:", details);
 
         if (!details || !details.medication?.name || !details.schedules?.[0]?.time) {
           return res.json({
