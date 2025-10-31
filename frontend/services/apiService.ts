@@ -4,13 +4,14 @@ import { API_URL } from '../constants/Config';
 
 // --- INTERFACES Y TIPOS ---
 export interface Schedule {
-  id: string;
-  medicationId: string;
-  time: string;
-  frequencyType: string;
-  frequencyValue?: number;
-  daysOfWeek?: string;
-  endDate?: string;
+  id: string;
+  medicationId: string;
+  time: string;
+  frequencyType: string;
+  frequencyValue?: number;
+  daysOfWeek?: string;
+  endDate?: string;
+  alertType: AlertType; // <-- ¡AÑADE ESTA LÍNEA!
 }
 
 export interface Medication {
@@ -24,11 +25,14 @@ export interface Medication {
 
 export type MedicationWithSchedules = Medication & { schedules: Schedule[] };
 
+export type AlertType = 'NOTIFICATION' | 'ALARM';
+
 export interface NewMedicationPayload {
   name: string;
   dosage: string;
   quantity: number;
   instructions?: string;
+  type: 'PILL' | 'SYRUP' | 'INHALER'; // <-- AÑADE ESTA LÍNEA
 }
 
 export interface NewSchedulePayload {
@@ -36,6 +40,7 @@ export interface NewSchedulePayload {
   frequencyType: 'DAILY' | 'HOURLY' | 'WEEKLY';
   frequencyValue?: number;
   daysOfWeek?: string;
+  alertType: AlertType;
 }
 
 export interface NextDose {
@@ -49,7 +54,7 @@ export interface NewIntakePayload {
   medicationId: string;
   scheduleId: string;
   scheduledFor: string;
-  action: 'TAKEN' | 'SKIPPED' | 'POSTPONED';
+  action: 'TAKEN' | 'SKIPPED' | 'POSTPONED' | 'CONFIRMED'; // Asegúrate de que 'CONFIRMED' esté
   actionAt: string;
 }
 
@@ -96,6 +101,13 @@ export interface CaregiverForPatient {
   id: string; 
   relation: string | null;
   caregiver: UserProfile; 
+}
+
+export interface PatientDashboard {
+  patient: UserProfile & {
+    medications: MedicationWithSchedules[];
+  };
+  todaysIntakes: IntakeLogWithMedication[];
 }
 
 
@@ -204,6 +216,25 @@ export const logIntake = async (payload: NewIntakePayload): Promise<boolean> => 
   } catch (error) {
     console.error('Error en logIntake:', error);
     throw error;
+  }
+};
+
+export const logPendingIntake = async (
+  medicationId: string, 
+  scheduleId: string, 
+  scheduledFor: string
+): Promise<boolean> => {
+  const requestUrl = `${API_URL}/intakes/pending`;
+  try {
+    const response = await fetch(requestUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ medicationId, scheduleId, scheduledFor })
+    });
+    return response.ok;
+  } catch (error) {
+    console.error('Error en logPendingIntake:', error);
+    return false;
   }
 };
 
@@ -364,6 +395,29 @@ export const linkCaregiverByEmail = async (patientId: string, caregiverEmail: st
     throw new Error(errorData.error || 'No se pudo vincular al cuidador.');
   }
   return await response.json();
+};
+
+export const fetchPatientDashboard = async (
+  caregiverId: string,
+  patientId: string
+): Promise<PatientDashboard> => {
+  if (!caregiverId || !patientId) {
+    throw new Error("El ID del cuidador y del paciente son requeridos.");
+  }
+
+  const requestUrl = `${API_URL}/caregivers/${caregiverId}/patients/${patientId}/dashboard`;
+
+  try {
+    const response = await fetch(requestUrl);
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Error del servidor: ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Error en fetchPatientDashboard:", error);
+    throw error;
+  }
 };
 
 /**

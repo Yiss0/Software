@@ -4,10 +4,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { usePatient } from '../context/PatientContext';
-import * as apiService from '../services/apiService';
+import * as apiService from '../services/apiService'; // <-- Importa todo apiService
 import { Clock, Plus, Trash2 } from 'lucide-react-native';
 
+// --- CAMBIOS DE TIPO ---
 type ScheduleInput = apiService.NewSchedulePayload;
+type MedicationType = 'PILL' | 'SYRUP' | 'INHALER';
+type AlertType = apiService.AlertType; // <-- Usamos el tipo de apiService
+// --- FIN CAMBIOS DE TIPO ---
 
 const convertLocalTimeToUTCString = (localTime: string): string => {
   if (!/^\d{2}:\d{2}$/.test(localTime)) return localTime;
@@ -19,7 +23,6 @@ const convertLocalTimeToUTCString = (localTime: string): string => {
   return `${utcHours}:${utcMinutes}`;
 };
 
-// --- FUNCIÓN AÑADIDA DE VUELTA ---
 const convertUTCTimeToLocalString = (utcTime: string): string => {
     if (!/^\d{2}:\d{2}$/.test(utcTime)) return utcTime;
     const [hours, minutes] = utcTime.split(':').map(Number);
@@ -47,12 +50,21 @@ export default function AddMedicationScreen() {
   const [quantity, setQuantity] = useState('');
   const [instructions, setInstructions] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  const [medType, setMedType] = useState<MedicationType>('PILL');
+  
   const [schedules, setSchedules] = useState<ScheduleInput[]>([]);
+  
+  // --- CAMBIO DE ESTADO ---
+  // Añadimos alertType al estado inicial del formulario de horario
   const [scheduleInput, setScheduleInput] = useState<Partial<ScheduleInput>>({
     time: '',
     frequencyType: 'DAILY',
     frequencyValue: 1,
+    alertType: 'NOTIFICATION', // <-- AÑADIDO
   });
+  // --- FIN CAMBIO DE ESTADO ---
+
   const [selectedDays, setSelectedDays] = useState<Set<number>>(new Set());
 
   const handleTimeChange = (text: string) => {
@@ -61,9 +73,11 @@ export default function AddMedicationScreen() {
     if (cleaned.length > 2) {
       formatted = `${cleaned.slice(0, 2)}:${cleaned.slice(2)}`;
     }
+    // Usamos 'prev' para no perder otros campos como alertType
     setScheduleInput(prev => ({ ...prev, time: formatted.slice(0, 5) }));
   };
 
+  // --- CAMBIO EN handleAddTime ---
   const handleAddTime = () => {
     const time = scheduleInput.time || '';
     const [hours, minutes] = time.split(':').map(Number);
@@ -80,18 +94,27 @@ export default function AddMedicationScreen() {
       return;
     }
 
+    // Añadimos el alertType al nuevo horario
     const newSchedule: ScheduleInput = { 
         time: utcTime,
         frequencyType: scheduleInput.frequencyType!, 
         frequencyValue: scheduleInput.frequencyType === 'HOURLY' ? scheduleInput.frequencyValue! : 1, 
         daysOfWeek: scheduleInput.frequencyType === 'WEEKLY' ? Array.from(selectedDays).join(',') : undefined, 
+        alertType: scheduleInput.alertType || 'NOTIFICATION', // <-- AÑADIDO
     };
     
     setSchedules([...schedules, newSchedule].sort((a, b) => a.time.localeCompare(b.time)));
-    setScheduleInput({ time: '', frequencyType: 'DAILY', frequencyValue: 1 });
+    
+    // Reiniciamos el formulario, manteniendo el tipo de alerta por si quiere añadir otro
+    setScheduleInput(prev => ({ 
+        ...prev, // Mantiene el alertType y frequencyType
+        time: '', 
+        frequencyValue: 1,
+    }));
     setSelectedDays(new Set());
     Keyboard.dismiss();
   };
+  // --- FIN CAMBIO EN handleAddTime ---
 
   const handleRemoveSchedule = (index: number) => {
     setSchedules(schedules.filter((_, i) => i !== index));
@@ -115,9 +138,12 @@ export default function AddMedicationScreen() {
         name, 
         dosage, 
         quantity: parseInt(quantity, 10), 
-        instructions 
+        instructions,
+        type: medType, 
       };
 
+      // OJO: La función addMedication debe manejar el envío de 'schedules'
+      // Tu función original ya lo hace correctamente.
       const newMed = await apiService.addMedication(patientIdToAddFor, newMedPayload, schedules);
 
       if (newMed && newMed.id) {
@@ -134,21 +160,23 @@ export default function AddMedicationScreen() {
     }
   };
 
-const getFrequencyText = (schedule: ScheduleInput): string => {
-    // 1. Tomamos la hora UTC guardada (ej. "23:30")
+  // --- CAMBIO EN getFrequencyText ---
+  const getFrequencyText = (schedule: ScheduleInput): string => {
     const utcTime = schedule.time;
-    // 2. La convertimos de vuelta a la hora local (ej. "20:30")
     const localTime = convertUTCTimeToLocalString(utcTime);
-    // 3. Formateamos la hora local para mostrarla
     const formattedTime = formatTimeToAMPM(localTime);
+    
+    // Añadimos el texto de la alerta
+    const alertText = schedule.alertType === 'ALARM' ? ' (Alarma)' : ' (Notificación)';
 
     switch (schedule.frequencyType) {
-        case 'DAILY': return `Cada día a las ${formattedTime}`;
-        case 'HOURLY': return `Cada ${schedule.frequencyValue} horas (desde ${formattedTime})`;
-        case 'WEEKLY': const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; const days = schedule.daysOfWeek?.split(',').map(d => dayNames[parseInt(d, 10)]).join(', ') || 'días no seleccionados'; return `Semanal (${days}) a las ${formattedTime}`;
+        case 'DAILY': return `Cada día a las ${formattedTime}${alertText}`;
+        case 'HOURLY': return `Cada ${schedule.frequencyValue} horas (desde ${formattedTime})${alertText}`;
+        case 'WEEKLY': const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']; const days = schedule.daysOfWeek?.split(',').map(d => dayNames[parseInt(d, 10)]).join(', ') || 'días no seleccionados'; return `Semanal (${days}) a las ${formattedTime}${alertText}`;
         default: return '';
     }
   }
+  // --- FIN CAMBIO EN getFrequencyText ---
 
   const toggleDay = (dayIndex: number) => {
     const newDays = new Set(selectedDays);
@@ -166,26 +194,72 @@ const getFrequencyText = (schedule: ScheduleInput): string => {
         </View>
 
         <View style={styles.form}>
+            {/* ... (Campos Name, Dosage, Quantity, Type no cambian) ... */}
             <Text style={styles.inputLabel}>Nombre del Medicamento *</Text>
             <TextInput style={styles.textInput} value={name} onChangeText={setName} placeholder="Ej: Paracetamol" />
 
             <Text style={styles.inputLabel}>Dosis *</Text>
             <TextInput style={styles.textInput} value={dosage} onChangeText={setDosage} placeholder="Ej: 500mg" />
 
-            <Text style={styles.inputLabel}>Cantidad de Pastillas *</Text>
+            <Text style={styles.inputLabel}>Cantidad *</Text>
             <TextInput style={styles.textInput} value={quantity} onChangeText={setQuantity} placeholder="Ej: 30" keyboardType="numeric" />
+
+            <Text style={styles.inputLabel}>Tipo de Medicamento *</Text>
+            <View style={styles.freqContainer}>
+                <TouchableOpacity 
+                    style={[styles.freqButton, medType === 'PILL' && styles.freqButtonActive]} 
+                    onPress={() => setMedType('PILL')}
+                >
+                    <Text style={[styles.freqButtonText, medType === 'PILL' && styles.freqButtonTextActive]}>Pastilla</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.freqButton, medType === 'SYRUP' && styles.freqButtonActive]} 
+                    onPress={() => setMedType('SYRUP')}
+                >
+                    <Text style={[styles.freqButtonText, medType === 'SYRUP' && styles.freqButtonTextActive]}>Jarabe</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.freqButton, medType === 'INHALER' && styles.freqButtonActive]} 
+                    onPress={() => setMedType('INHALER')}
+                >
+                    <Text style={[styles.freqButtonText, medType === 'INHALER' && styles.freqButtonTextActive]}>Inhalador</Text>
+                </TouchableOpacity>
+            </View>
 
             <Text style={styles.inputLabel}>Instrucciones (Opcional)</Text>
             <TextInput style={[styles.textInput, styles.textArea]} value={instructions} onChangeText={setInstructions} placeholder="Ej: Tomar con comida..." multiline />
             
             <Text style={styles.sectionTitle}>Horarios y Frecuencia</Text>
             
+            {/* --- CAMBIO EN BOTONES DE FRECUENCIA --- */}
+            {/* Usamos 'prev' para no borrar el 'alertType' seleccionado */}
             <Text style={styles.inputLabel}>Frecuencia</Text>
             <View style={styles.freqContainer}>
-                <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'DAILY' && styles.freqButtonActive]} onPress={() => setScheduleInput({ frequencyType: 'DAILY', time: '', frequencyValue: 1 })}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'DAILY' && styles.freqButtonTextActive]}>Cada Día</Text></TouchableOpacity>
-                <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'WEEKLY' && styles.freqButtonActive]} onPress={() => setScheduleInput({ frequencyType: 'WEEKLY', time: '', frequencyValue: 1 })}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'WEEKLY' && styles.freqButtonTextActive]}>Días Específicos</Text></TouchableOpacity>
-                <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'HOURLY' && styles.freqButtonActive]} onPress={() => setScheduleInput({ frequencyType: 'HOURLY', time: '', frequencyValue: 8 })}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'HOURLY' && styles.freqButtonTextActive]}>Intervalo Horas</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'DAILY' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, frequencyType: 'DAILY', time: '', frequencyValue: 1 }))}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'DAILY' && styles.freqButtonTextActive]}>Cada Día</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'WEEKLY' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, frequencyType: 'WEEKLY', time: '', frequencyValue: 1 }))}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'WEEKLY' && styles.freqButtonTextActive]}>Días Específicos</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'HOURLY' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, frequencyType: 'HOURLY', time: '', frequencyValue: 8 }))}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'HOURLY' && styles.freqButtonTextActive]}>Intervalo Horas</Text></TouchableOpacity>
             </View>
+            {/* --- FIN CAMBIO BOTONES FRECUENCIA --- */}
+
+
+            {/* --- NUEVA UI: TIPO DE ALERTA --- */}
+            <Text style={styles.inputLabel}>Tipo de Alerta</Text>
+            <View style={styles.freqContainer}>
+                <TouchableOpacity 
+                    style={[styles.freqButton, scheduleInput.alertType === 'NOTIFICATION' && styles.freqButtonActive]} 
+                    onPress={() => setScheduleInput(prev => ({ ...prev, alertType: 'NOTIFICATION' }))}
+                >
+                    <Text style={[styles.freqButtonText, scheduleInput.alertType === 'NOTIFICATION' && styles.freqButtonTextActive]}>Notificación</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.freqButton, scheduleInput.alertType === 'ALARM' && styles.freqButtonActive]} 
+                    onPress={() => setScheduleInput(prev => ({ ...prev, alertType: 'ALARM' }))}
+                >
+                    <Text style={[styles.freqButtonText, scheduleInput.alertType === 'ALARM' && styles.freqButtonTextActive]}>Alarma</Text>
+                </TouchableOpacity>
+            </View>
+            {/* --- FIN NUEVA UI --- */}
+
 
             {scheduleInput.frequencyType === 'WEEKLY' && (
                 <>

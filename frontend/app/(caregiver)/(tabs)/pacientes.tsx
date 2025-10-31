@@ -1,10 +1,13 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, StyleSheet, SafeAreaView, TextInput, Alert, Modal } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../../context/AuthContext';
 import { usePatient } from '../../../context/PatientContext';
 import * as apiService from '../../../services/apiService';
 import { Plus, X } from 'lucide-react-native';
+
+import * as pushService from '../../../services/pushNotificationService'; // Import existente
+import Constants from 'expo-constants'; // Import existente
 
 export default function PacientesScreen() {
   const router = useRouter();
@@ -15,8 +18,9 @@ export default function PacientesScreen() {
   const [patientEmail, setPatientEmail] = useState('');
   const [isLinking, setIsLinking] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
+
+  const pushRegistered = useRef(false);
   
-  // --- LÍNEA AÑADIDA PARA CORREGIR EL ERROR ---
   const [error, setError] = useState<string | null>(null);
 
   const loadLinkedPatients = useCallback(async () => {
@@ -35,11 +39,37 @@ export default function PacientesScreen() {
     }
   }, [user]);
 
+  // --- HOOK MODIFICADO ---
+  // Se actualizó este hook para incluir la lógica de registro de notificaciones
   useFocusEffect(
     useCallback(() => {
-      loadLinkedPatients();
-    }, [loadLinkedPatients])
+      // Creamos una función async interna para manejar la lógica
+      const loadData = async () => {
+        if (user?.id && user.role === 'CAREGIVER') {
+          // 1. Carga la lista de pacientes
+          await loadLinkedPatients();
+
+          // 2. Registra para notificaciones push (solo la primera vez que entra)
+          if (!pushRegistered.current) {
+            console.log("[PacientesScreen] Registrando para notificaciones push...");
+            // Obtenemos el Project ID de la configuración de Expo
+            const projectId = Constants.expoConfig?.extra?.eas?.projectId; 
+            
+            if (projectId) {
+              await pushService.registerForPushNotifications(user.id, projectId);
+              pushRegistered.current = true; // Marcamos como registrado
+            } else {
+              console.error("No se encontró 'projectId' en la configuración de Expo (extra.eas.projectId).");
+              Alert.alert("Error de Configuración", "Falta el projectId de Expo en app.json, las notificaciones push no funcionarán.");
+            }
+          }
+        }
+      };
+
+      loadData();
+    }, [user, loadLinkedPatients]) // Depende del usuario y la función de carga
   );
+  // --- FIN DE LA MODIFICACIÓN ---
 
   const handleLinkPatient = async () => {
     if (!patientEmail.trim() || !user?.id) {
@@ -61,12 +91,16 @@ export default function PacientesScreen() {
   };
 
   const handleSelectPatient = (patientProfile: apiService.UserProfile) => {
-    selectPatient(patientProfile);
+    // YA NO seleccionamos el paciente en el contexto si no es necesario para otras tabs
+    // selectPatient(patientProfile); 
+
+    // CAMBIAMOS ESTA LÍNEA
     router.push({ 
-        pathname: '/historial-paciente', 
+        // ANTES: pathname: '/historial-paciente', 
+        pathname: '/(caregiver)/patient-dashboard', // <-- NUEVA RUTA
         params: { 
             patientId: patientProfile.id,
-            patientName: patientProfile.firstName
+            patientName: `${patientProfile.firstName} ${patientProfile.lastName}`
         }
     });
   };
@@ -116,12 +150,12 @@ export default function PacientesScreen() {
                 <Text style={styles.modalTitle}>Vincular Nuevo Paciente</Text>
                 <Text style={styles.modalSubtitle}>Ingresa el email del paciente. La persona ya debe tener una cuenta en PastillApp.</Text>
                 <TextInput 
-                  style={styles.input} 
-                  placeholder="email.paciente@ejemplo.com" 
-                  value={patientEmail} 
-                  onChangeText={setPatientEmail} 
-                  keyboardType="email-address" 
-                  autoCapitalize="none" 
+                    style={styles.input} 
+                    placeholder="email.paciente@ejemplo.com" 
+                    value={patientEmail} 
+                    onChangeText={setPatientEmail} 
+                    keyboardType="email-address" 
+                    autoCapitalize="none" 
                 />
                 <TouchableOpacity style={[styles.button, isLinking && styles.buttonDisabled]} onPress={handleLinkPatient} disabled={isLinking}>
                     {isLinking ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Vincular</Text>}

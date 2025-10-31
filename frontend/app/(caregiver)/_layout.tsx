@@ -3,11 +3,17 @@
 import { Stack } from 'expo-router';
 
 export default function CaregiverLayout() {
-  // Este Stack es para las pantallas DENTRO del grupo (caregiver)
-  // Aquí definimos el layout de pestañas como la pantalla principal de este grupo.
   return (
     <Stack>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      {/* AÑADIMOS ESTA LÍNEA */}
+      <Stack.Screen 
+        name="patient-dashboard" 
+        options={{ 
+          title: 'Resumen del Paciente',
+          headerBackTitle: 'Atrás' // Título del botón para volver en iOS
+        }} 
+      />
     </Stack>
   );
 }

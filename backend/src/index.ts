@@ -1,8 +1,7 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import "dotenv/config";
-import { PrismaClient, Medication, Schedule } from "@prisma/client";
-import bcrypt from "bcrypt";
+import { PrismaClient, Medication, Schedule, MedicationType, AlertType } from "@prisma/client";import bcrypt from "bcrypt";
 import { z } from "zod";
 
 const app = express();
@@ -73,12 +72,36 @@ app.get("/patients/:id", async (req: Request, res: Response) => {
   res.json(user);
 });
 
+app.post("/users/:id/push-token", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { token } = req.body as { token?: string };
+
+  if (!token) {
+    return res.status(400).json({ error: "Token es requerido." });
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      // Guardamos el token en el usuario (sea paciente o cuidador)
+      data: { pushToken: token }, 
+    });
+    console.log(`[Push Token] Token guardado para usuario ${updatedUser.firstName}: ${token}`);
+    res.json({ ok: true, message: "Token guardado." });
+  } catch (error) {
+    console.error("Error al guardar el push token:", error);
+    res.status(500).json({ error: "No se pudo guardar el token." });
+  }
+});
+
 // ================= Medicamentos =================
 app.post(
   "/patients/:patientId/medications",
   async (req: Request, res: Response) => {
     const { patientId } = req.params;
-    const { name, dosage, quantity, presentation, instructions, color } =
+    
+    // --- CAMBIO 1: Añadimos 'type' a la desestructuración ---
+    const { name, dosage, quantity, presentation, instructions, color, type } =
       req.body as {
         name?: string;
         dosage?: string;
@@ -86,8 +109,15 @@ app.post(
         presentation?: string;
         instructions?: string;
         color?: string;
+        type?: MedicationType; // <-- Aceptamos el nuevo tipo
       };
+      
     if (!name) return res.status(400).json({ error: "Name is required" });
+
+    // --- CAMBIO 2 (Opcional pero recomendado): Validación ---
+    if (type && !Object.values(MedicationType).includes(type)) {
+      return res.status(400).json({ error: "Tipo de medicamento inválido." });
+    }
 
     try {
       const med = await prisma.medication.create({
@@ -99,6 +129,7 @@ app.post(
           presentation,
           instructions,
           color,
+          type: type || MedicationType.PILL, // <-- CAMBIO 3: Guardamos el tipo (o 'PILL' por defecto)
         },
       });
       res.status(201).json(med);
@@ -134,6 +165,7 @@ app.delete("/medications/:id", async (req: Request, res: Response) => {
 
 // ================= Horarios =================
 app.post("/schedules", async (req: Request, res: Response) => {
+  // --- CAMBIO 1: Añadir 'alertType' ---
   const {
     medicationId,
     time,
@@ -141,6 +173,7 @@ app.post("/schedules", async (req: Request, res: Response) => {
     frequencyValue,
     daysOfWeek,
     endDate,
+    alertType, // <-- Nuevo campo
   } = req.body as {
     medicationId?: string;
     time?: string;
@@ -148,9 +181,16 @@ app.post("/schedules", async (req: Request, res: Response) => {
     frequencyValue?: number;
     daysOfWeek?: string;
     endDate?: string;
+    alertType?: AlertType; // <-- Nuevo tipo
   };
+
   if (!medicationId || !time || !frequencyType)
     return res.status(400).json({ error: "Missing fields" });
+
+  // Validación opcional pero recomendada
+  if (alertType && !Object.values(AlertType).includes(alertType)) {
+    return res.status(400).json({ error: "Tipo de alerta inválido." });
+  }
 
   try {
     const schedule = await prisma.schedule.create({
@@ -161,6 +201,8 @@ app.post("/schedules", async (req: Request, res: Response) => {
         frequencyValue,
         daysOfWeek,
         endDate,
+        // --- CAMBIO 2: Guardar el campo (o 'NOTIFICATION' por defecto) ---
+        alertType: alertType || AlertType.NOTIFICATION, 
       },
     });
     res.status(201).json(schedule);
@@ -187,26 +229,45 @@ app.post("/intakes", async (req: Request, res: Response) => {
       medicationId?: string;
       scheduleId?: string;
       scheduledFor?: string;
-      action?: string;
+      action?: string; // "CONFIRMED", "POSTPONED"
       actionAt?: string;
       note?: string;
     };
+
   if (!medicationId || !scheduledFor || !action || !actionAt)
     return res.status(400).json({ error: "Missing fields" });
 
   try {
-    const intake = await prisma.intakeLog.create({
-      data: {
-        medicationId,
-        scheduleId,
-        scheduledFor: new Date(scheduledFor),
-        action,
-        actionAt: new Date(actionAt),
-        note,
+    const scheduledForDate = new Date(scheduledFor);
+
+    // Usamos 'upsert' (Actualizar o Insertar)
+    const intake = await prisma.intakeLog.upsert({
+      where: {
+        // Busca el registro PENDING que coincide
+        medicationId_scheduledFor: {
+          medicationId: medicationId,
+          scheduledFor: scheduledForDate,
+        }
       },
+      // --- ACTUALIZA el registro PENDING ---
+      update: {
+        action: action,
+        actionAt: new Date(actionAt),
+        note: note,
+      },
+      // --- CREA (si no existía PENDING, ej: toma manual) ---
+      create: {
+        medicationId: medicationId,
+        scheduleId: scheduleId,
+        scheduledFor: scheduledForDate,
+        action: action,
+        actionAt: new Date(actionAt),
+        note: note,
+      }
     });
     res.status(201).json(intake);
   } catch (e: any) {
+    console.error("Error en POST /intakes (upsert):", e.message);
     res.status(400).json({ error: (e as Error).message });
   }
 });
@@ -233,6 +294,49 @@ app.get("/patients/:patientId/intakes", async (req: Request, res: Response) => {
     });
     res.json(intakes);
   } catch (e: any) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+app.post("/intakes/pending", async (req: Request, res: Response) => {
+  const { medicationId, scheduleId, scheduledFor } = req.body as {
+    medicationId?: string;
+    scheduleId?: string;
+    scheduledFor?: string;
+  };
+
+  if (!medicationId || !scheduleId || !scheduledFor) {
+    return res.status(400).json({ error: "Faltan campos (medicationId, scheduleId, scheduledFor)" });
+  }
+
+  try {
+    const scheduledForDate = new Date(scheduledFor);
+
+    // Usamos 'upsert' para crear el log PENDING
+    // Si ya existe (porque la app se cerró y volvió a abrir), no hace nada.
+    const intake = await prisma.intakeLog.upsert({
+      where: {
+        // Busca usando el constraint @unique que acabamos de añadir
+        medicationId_scheduledFor: {
+          medicationId: medicationId,
+          scheduledFor: scheduledForDate,
+        }
+      },
+      // Si ya existe, no actualiza nada
+      update: {}, 
+      // Si no existe, lo crea como PENDING
+      create: {
+        medicationId: medicationId,
+        scheduleId: scheduleId,
+        scheduledFor: scheduledForDate,
+        action: "PENDING",
+        // actionAt queda nulo (null)
+      }
+    });
+
+    res.status(201).json(intake);
+  } catch (e: any) {
+    console.error("Error al crear intake 'PENDING':", e.message);
     res.status(500).json({ error: (e as Error).message });
   }
 });
@@ -335,7 +439,7 @@ app.get(
               new Date(l.scheduledFor).getMinutes() === trigger.getMinutes()
           );
 
-          if (logMatch && logMatch.action === "POSTPONED") {
+          if (logMatch && logMatch.action === "POSTPONED" && logMatch.actionAt) {
             const postponed = new Date(
               new Date(logMatch.actionAt).getTime() + 10 * 60000
             );
@@ -455,6 +559,78 @@ app.post(
       if (e?.code === "P2002")
         return res.status(409).json({ error: "Link already exists" });
       res.status(500).json({ error: "Internal error" });
+    }
+  }
+);
+
+app.get(
+  "/caregivers/:caregiverId/patients/:patientId/dashboard",
+  async (req: Request, res: Response) => {
+    const { caregiverId, patientId } = req.params;
+
+    try {
+      // 1. Chequeo de seguridad: Validar que el cuidador está vinculado al paciente
+      const link = await prisma.patientCaregiver.findUnique({
+        where: {
+          patientId_caregiverId: {
+            patientId,
+            caregiverId,
+          },
+        },
+      });
+
+      if (!link) {
+        return res
+          .status(403)
+          .json({ error: "Acceso denegado: No tienes permiso para ver a este paciente." });
+      }
+
+      // 2. Obtener los datos del paciente y sus medicamentos/horarios activos
+      const patientData = await prisma.user.findUnique({
+        where: { id: patientId },
+        include: {
+          medications: {
+            where: { active: true, deletedAt: null },
+            include: {
+              schedules: {
+                where: { active: true },
+              },
+            },
+            orderBy: { name: 'asc' },
+          },
+        },
+      });
+
+      if (!patientData) {
+        return res.status(404).json({ error: "Paciente no encontrado." });
+      }
+
+      // 3. Obtener las tomas (intakes) registradas en el día de hoy
+      const startOfDay = new Date();
+      startOfDay.setUTCHours(0, 0, 0, 0);
+      const endOfDay = new Date();
+      endOfDay.setUTCHours(23, 59, 59, 999);
+
+      const todaysIntakes = await prisma.intakeLog.findMany({
+        where: {
+          medication: { patientId },
+          actionAt: { gte: startOfDay, lte: endOfDay },
+        },
+        include: { medication: { select: { name: true, dosage: true } } },
+        orderBy: { actionAt: 'desc' },
+      });
+
+      // 4. Combinar y enviar la respuesta
+      const { password, ...safePatientData } = patientData; // Nunca enviar la contraseña
+
+      res.json({
+        patient: safePatientData,
+        todaysIntakes,
+      });
+
+    } catch (error) {
+      console.error("Error al obtener el dashboard del paciente:", error);
+      res.status(500).json({ error: "Ocurrió un error en el servidor." });
     }
   }
 );
@@ -781,6 +957,52 @@ app.post("/chatbot/interpret", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error en el endpoint del chatbot:", error);
     res.status(500).json({ error: "Ocurrió un error al procesar tu solicitud." });
+  }
+});
+
+// ================= CRON JOB =================
+// Esta ruta será llamada por Render cada 10 minutos
+app.post("/cron/mark-skipped", async (req: Request, res: Response) => {
+  console.log("[Cron Job] Ejecutando tarea para marcar tomas omitidas...");
+  
+  try {
+    // 1. Calcula el tiempo límite (hace 10 minutos en UTC)
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+
+    // 2. Busca todas las tomas que sigan "PENDING" y sean más antiguas que el límite
+    const intakesToSkip = await prisma.intakeLog.findMany({
+      where: {
+        action: "PENDING",
+        scheduledFor: {
+          lt: tenMinutesAgo, // lt = "less than" (menor que)
+        },
+      },
+    });
+
+    if (intakesToSkip.length === 0) {
+      console.log("[Cron Job] No se encontraron tomas para omitir.");
+      return res.status(200).json({ message: "No intakes to skip." });
+    }
+
+    // 3. Actualiza todas las tomas encontradas a "SKIPPED"
+    const skippedCount = await prisma.intakeLog.updateMany({
+      where: {
+        id: {
+          in: intakesToSkip.map(intake => intake.id), // Actualiza por ID
+        },
+      },
+      data: {
+        action: "SKIPPED",
+        actionAt: new Date(), // Marcamos la hora en que el sistema la omitió
+      },
+    });
+
+    console.log(`[Cron Job] ${skippedCount.count} tomas marcadas como SKIPPED.`);
+    res.status(200).json({ message: `Skipped ${skippedCount.count} intakes.` });
+
+  } catch (error) {
+    console.error("[Cron Job] Error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
