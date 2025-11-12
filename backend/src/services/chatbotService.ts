@@ -1,116 +1,226 @@
-import axios from 'axios';
-import 'dotenv/config';
+import axios, { AxiosError } from 'axios';
+import dotenv from 'dotenv';
+import { MedicationType, AlertType } from "@prisma/client";
 
-// 1. Cargamos la API Key de Gemini desde el archivo .env
+dotenv.config();
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// URL CORREGIDA: Usando el nombre del modelo exacto que mencionaste.
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
 
-// 2. Usamos la URL correcta con el modelo que sí está disponible para ti
-const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent';
+// ====================================================================
+// 1. TIPOS DE INTENCIÓN (Para la primera llamada de clasificación)
+// ====================================================================
 
-// --- PASO 1: AÑADIMOS LA NUEVA INTENCIÓN ---
-type Intent = 'ADD_MEDICATION' | 'CONFIRM_INTAKE' | 'GREETING' | 'GENERAL_QUESTION' | 'UNKNOWN';
+export type ChatIntent = 
+  | 'ADD_MEDICINE'
+  | 'VIEW_SCHEDULE'
+  | 'CONFIRM_INTAKE' // Añadido
+  | 'GREETING'
+  | 'FAREWELL'
+  | 'HELP'
+  | 'UNKNOWN';
 
-interface MedicationDetails {
-  medication: { name: string; dosage?: string; };
-  schedules: Array<{ time: string; frequencyType: 'DAILY' | 'WEEKLY' | 'HOURLY'; }>;
+export interface IntentResponse {
+  intent: ChatIntent;
+  details: string | null; // El texto crudo (ej: "paracetamol")
+  error?: string;
 }
 
-const axiosConfig = {
-  headers: {
-    'x-goog-api-key': GEMINI_API_KEY,
-    'Content-Type': 'application/json',
-  },
+const classificationPrompt = (userMessage: string): string => {
+  return `
+    Tu única tarea es analizar el siguiente mensaje del usuario y clasificar su intención.
+    Debes responder únicamente con un objeto JSON válido.
+    
+    Las intenciones posibles son:
+    - "ADD_MEDICINE": El usuario quiere agregar un nuevo medicamento.
+    - "VIEW_SCHEDULE": El usuario quiere ver sus medicamentos o el horario.
+    - "CONFIRM_INTAKE": El usuario quiere confirmar que se tomó un medicamento (ej: "ya me tomé la pastilla", "confirmar toma").
+    - "GREETING": Un saludo simple.
+    - "FAREWELL": Una despedida.
+    - "HELP": El usuario pide ayuda.
+    - "UNKNOWN": La intención no está clara.
+
+    Extrae el detalle principal en el campo "details" (ej: el nombre del medicamento, o el saludo).
+
+    Formato de respuesta (solo el JSON):
+    {"intent": "INTENCION_DETECTADA", "details": "Detalle principal o null"}
+
+    Mensaje del usuario a analizar:
+    "${userMessage}"
+  `;
 };
 
-export async function classifyIntent(userMessage: string): Promise<Intent> {
-  // --- PASO 2: ACTUALIZAMOS EL PROMPT PARA QUE ENTIENDA LA NUEVA INTENCIÓN ---
-  const prompt = `Clasifica el siguiente mensaje con una sola palabra de esta lista: [ADD_MEDICATION, CONFIRM_INTAKE, GREETING, UNKNOWN].
-- ADD_MEDICATION: para registrar, añadir o agendar un medicamento.
-- CONFIRM_INTAKE: si el usuario confirma que ya tomó una pastilla (ej: "ya me la tomé", "toma registrada").
-- GREETING: para saludos o despedidas.
+/**
+ * FUNCIÓN 1: Clasifica la intención general del usuario.
+ * Reemplaza al antiguo 'classifyIntent' pero devuelve un objeto.
+ */
+export const analyzeChatIntent = async (userMessage: string): Promise<IntentResponse> => {
+  if (!GEMINI_API_KEY) {
+    console.error('Error: GEMINI_API_KEY no está configurada.');
+    return { intent: 'UNKNOWN', details: null, error: 'Configuración del servidor incompleta.' };
+  }
 
-Ejemplos:
-- "hola que tal" -> GREETING
-- "agrega losartán 50mg a las 8pm" -> ADD_MEDICATION
-- "listo, ya me tomé la pastilla" -> CONFIRM_INTAKE
-- "confirmo la toma de mi medicamento" -> CONFIRM_INTAKE
-
-Clasifica este mensaje: "${userMessage}"`;
+  const requestBody = {
+    contents: [{ parts: [{ text: classificationPrompt(userMessage) }] }],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: "application/json",
+    }
+  };
 
   try {
-    const response = await axios.post(GEMINI_URL, {
-      contents: [{ parts: [{ text: prompt }] }],
-    }, axiosConfig);
+    // Log para verificar la URL y el cuerpo (opcional)
+    // console.log(`[chatbotService] Enviando a URL: ${GEMINI_API_URL}`);
+    
+    const response = await axios.post(GEMINI_API_URL, requestBody);
+    const rawResponse = response.data.candidates[0].content.parts[0].text;
+    console.log(`[chatbotService.analyzeChatIntent] Respuesta cruda: ${rawResponse}`);
+    const parsedJson: IntentResponse = JSON.parse(rawResponse);
+    return parsedJson;
 
-    const candidates = response.data.candidates;
-    if (!candidates || candidates.length === 0 || !candidates[0].content?.parts?.[0]?.text) {
-      return 'UNKNOWN';
+  } catch (error) {
+    // Error detallado
+    console.error(`[chatbotService.analyzeChatIntent] Error en API:`);
+    if (axios.isAxiosError(error)) {
+      console.error(JSON.stringify(error.response?.data, null, 2));
+    } else {
+      console.error(error);
     }
     
-    const intent = candidates[0].content.parts[0].text.trim().toUpperCase();
-    if (['ADD_MEDICATION', 'CONFIRM_INTAKE', 'GREETING', 'UNKNOWN'].includes(intent)) {
-      return intent as Intent;
-    }
-    return 'UNKNOWN';
-  } catch (error) {
-    console.error('Error en classifyIntent:', error);
-    return 'UNKNOWN';
+    return { 
+      intent: 'UNKNOWN', 
+      details: null, 
+      error: 'No se pudo procesar la solicitud con la IA.' 
+    };
   }
+};
+
+
+// ====================================================================
+// 2. TIPOS DE EXTRACCIÓN (Para la segunda llamada de detalles)
+// ====================================================================
+
+// Este es el tipo que 'index.ts' espera
+export interface MedicationDetails {
+  medication: {
+    name: string;
+    dosage?: string;
+    quantity?: number;
+    instructions?: string;
+    type?: MedicationType;
+  };
+  schedules: {
+    time: string; // "HH:MM"
+    frequencyType?: 'DAILY' | 'HOURLY' | 'WEEKLY';
+    frequencyValue?: number;
+    daysOfWeek?: string; // "0,1,5"
+    alertType?: AlertType;
+  }[];
 }
 
-// (Las funciones extractMedicationDetails y getConversationalResponse no necesitan cambios)
+const extractionPrompt = (userMessage: string): string => {
+  return `
+    Tu tarea es analizar el siguiente mensaje del usuario, que quiere agregar un medicamento, y extraer los detalles en un formato JSON específico.
+    Debes responder únicamente con el objeto JSON. No incluyas "json" o "".
 
-export async function extractMedicationDetails(userMessage: string): Promise<MedicationDetails | null> {
-    const prompt = `Tu única tarea es analizar el texto del usuario y devolver un objeto JSON.
-La estructura debe ser: {"medication":{"name":"string","dosage":"string"},"schedules":[{"time":"HH:mm","frequencyType":"string"}]}.
-Tu respuesta DEBE SER ÚNICAMENTE el texto JSON, sin nada más. No incluyas "json" ni ninguna otra palabra.
+    Reglas:
+    1.  'name' (medicamento) y 'time' (horario) son obligatorios.
+    2.  Si no se menciona la dosis (dosage), instrucciones, etc., omite el campo (no uses 'null' o 'undefined').
+    3.  El 'time' debe estar en formato "HH:MM". (ej: 8am -> "08:00", 10pm -> "22:00").
+    4.  'frequencyType' por defecto es "DAILY" si solo se da una hora.
+    5.  'type' (MedicationType) debe ser 'PILL', 'SYRUP', 'INJECTION', o 'OTHER'. Por defecto 'PILL'.
+    6.  'quantity' por defecto es 30.
+    7.  'daysOfWeek' solo aplica si frequencyType es "WEEKLY". (Domingo=0, Lunes=1...).
 
-Ejemplo:
-Usuario: "Por favor, agrega Paracetamol de 500mg todos los días a las 10 de la noche"
-Tu Respuesta: {"medication":{"name":"Paracetamol","dosage":"500mg"},"schedules":[{"time":"22:00","frequencyType":"DAILY"}]}
-
-Ahora, analiza este mensaje: "${userMessage}"`;
-  
-    try {
-      const response = await axios.post(GEMINI_URL, {
-        contents: [{ parts: [{ text: prompt }] }],
-      }, axiosConfig);
-  
-      const candidates = response.data.candidates;
-      if (!candidates || candidates.length === 0 || !candidates[0].content?.parts?.[0]?.text) {
-          return null;
-      }
-  
-      const resultText = candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
-      const resultJson = JSON.parse(resultText);
-  
-      if (!resultJson || !resultJson.medication) {
-          return null;
-      }
-  
-      return resultJson as MedicationDetails;
-    } catch (error) {
-      console.error('Error en extractMedicationDetails:', error);
-      return null;
+    Formato de respuesta (solo el JSON):
+    {
+      "medication": {
+        "name": "NombreMedicamento",
+        "dosage": "500mg" 
+      },
+      "schedules": [
+        { "time": "08:00", "frequencyType": "DAILY" },
+        { "time": "20:00", "frequencyType": "DAILY" }
+      ]
     }
-}
-  
-export async function getConversationalResponse(userMessage: string): Promise<string> {
-    const prompt = `Eres Pasti, un asistente amigable de la app PastillApp. Responde de forma breve y humana al siguiente mensaje: "${userMessage}"`;
-  
-    try {
-        const response = await axios.post(GEMINI_URL, {
-            contents: [{ parts: [{ text: prompt }] }],
-        }, axiosConfig);
-        
-        const candidates = response.data.candidates;
-        if (!candidates || candidates.length === 0 || !candidates[0].content?.parts?.[0]?.text) {
-          return "Lo siento, tuve un problema para generar la respuesta.";
-        }
-        
-        return candidates[0].content.parts[0].text.trim();
-    } catch (error) {
-        console.error('Error en getConversationalResponse:', error);
-        return "Lo siento, ahora mismo no puedo responder.";
+
+    Mensaje del usuario a analizar:
+    "${userMessage}"
+  `;
+};
+
+/**
+ * FUNCIÓN 2: Extrae los detalles estructurados de un medicamento.
+ * (Esta es la función que faltaba)
+ */
+export const extractMedicationDetails = async (userMessage: string): Promise<MedicationDetails | null> => {
+  if (!GEMINI_API_KEY) return null;
+
+  const requestBody = {
+    contents: [{ parts: [{ text: extractionPrompt(userMessage) }] }],
+    generationConfig: {
+      temperature: 0.1,
+      responseMimeType: "application/json",
     }
-}
+  };
+
+  try {
+    const response = await axios.post(GEMINI_API_URL, requestBody);
+    const rawResponse = response.data.candidates[0].content.parts[0].text;
+    console.log(`[chatbotService.extractMedicationDetails] Respuesta cruda: ${rawResponse}`);
+    const parsedJson: MedicationDetails = JSON.parse(rawResponse);
+    return parsedJson;
+  } catch (error) {
+    console.error(`[chatbotService.extractMedicationDetails] Error en API:`);
+    if (axios.isAxiosError(error)) {
+      console.error(JSON.stringify(error.response?.data, null, 2));
+    } else {
+      console.error(error);
+    }
+    return null;
+  }
+};
+
+
+// ====================================================================
+// 3. RESPUESTA CONVERSACIONAL (Para saludos, etc.)
+// ====================================================================
+
+const conversationalPrompt = (userMessage: string): string => {
+  return `
+    Eres "Asistente Pasti". Responde al siguiente saludo o comentario casual del usuario de forma amigable y breve (máx 15 palabras).
+    
+    Usuario: "${userMessage}"
+    Asistente:
+  `;
+};
+
+/**
+ * FUNCIÓN 3: Genera una respuesta casual.
+ * (Esta es la otra función que faltaba)
+ */
+export const getConversationalResponse = async (userMessage: string): Promise<string> => {
+  if (!GEMINI_API_KEY) return "Hola.";
+
+  const requestBody = {
+    contents: [{ parts: [{ text: conversationalPrompt(userMessage) }] }],
+    generationConfig: {
+      temperature: 0.7,
+    }
+  };
+
+  try {
+    const response = await axios.post(GEMINI_API_URL, requestBody);
+    const rawResponse = response.data.candidates[0].content.parts[0].text;
+    return rawResponse.trim();
+  } catch (error) {
+    console.error(`[chatbotService.getConversationalResponse] Error en API:`);
+    if (axios.isAxiosError(error)) {
+      console.error(JSON.stringify(error.response?.data, null, 2));
+    } else {
+      console.error(error);
+    }
+    return "No pude procesar eso, pero ¡hola!";
+  }
+};

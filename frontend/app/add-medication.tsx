@@ -1,37 +1,32 @@
+// frontend/app/add-medication.tsx (CORREGIDO CON LÓGICA UTC)
+
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, FlatList, Keyboard, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { usePatient } from '../context/PatientContext';
-import * as apiService from '../services/apiService'; // <-- Importa todo apiService
+import * as apiService from '../services/apiService';
 import { Clock, Plus, Trash2 } from 'lucide-react-native';
 
-// --- CAMBIOS DE TIPO ---
 type ScheduleInput = apiService.NewSchedulePayload;
 type MedicationType = 'PILL' | 'SYRUP' | 'INHALER';
-type AlertType = apiService.AlertType; // <-- Usamos el tipo de apiService
-// --- FIN CAMBIOS DE TIPO ---
+type AlertType = apiService.AlertType;
 
+// --- FUNCIÓN AÑADIDA ---
+// Convierte una hora local (ej: "23:30") al string UTC correspondiente (ej: "02:30")
 const convertLocalTimeToUTCString = (localTime: string): string => {
   if (!/^\d{2}:\d{2}$/.test(localTime)) return localTime;
   const [hours, minutes] = localTime.split(':').map(Number);
   const date = new Date();
-  date.setHours(hours, minutes, 0, 0);
+  date.setHours(hours, minutes, 0, 0); // Establece la hora local en el dispositivo
+  
   const utcHours = String(date.getUTCHours()).padStart(2, '0');
   const utcMinutes = String(date.getUTCMinutes()).padStart(2, '0');
+  
   return `${utcHours}:${utcMinutes}`;
 };
-
-const convertUTCTimeToLocalString = (utcTime: string): string => {
-    if (!/^\d{2}:\d{2}$/.test(utcTime)) return utcTime;
-    const [hours, minutes] = utcTime.split(':').map(Number);
-    const date = new Date();
-    date.setUTCHours(hours, minutes, 0, 0);
-    const localHours = String(date.getHours()).padStart(2, '0');
-    const localMinutes = String(date.getMinutes()).padStart(2, '0');
-    return `${localHours}:${localMinutes}`;
-};
+// -------------------------
 
 const formatTimeToAMPM = (time: string) => {
     if (!/^\d{2}:\d{2}$/.test(time)) return time;
@@ -50,21 +45,16 @@ export default function AddMedicationScreen() {
   const [quantity, setQuantity] = useState('');
   const [instructions, setInstructions] = useState('');
   const [loading, setLoading] = useState(false);
-  
   const [medType, setMedType] = useState<MedicationType>('PILL');
+  const [schedules, setSchedules] = useState<ScheduleInput[]>([]); // Sigue guardando hora local para UI
   
-  const [schedules, setSchedules] = useState<ScheduleInput[]>([]);
-  
-  // --- CAMBIO DE ESTADO ---
-  // Añadimos alertType al estado inicial del formulario de horario
   const [scheduleInput, setScheduleInput] = useState<Partial<ScheduleInput>>({
     time: '',
     frequencyType: 'DAILY',
     frequencyValue: 1,
-    alertType: 'NOTIFICATION', // <-- AÑADIDO
+    alertType: 'NOTIFICATION',
   });
-  // --- FIN CAMBIO DE ESTADO ---
-
+  
   const [selectedDays, setSelectedDays] = useState<Set<number>>(new Set());
 
   const handleTimeChange = (text: string) => {
@@ -73,48 +63,44 @@ export default function AddMedicationScreen() {
     if (cleaned.length > 2) {
       formatted = `${cleaned.slice(0, 2)}:${cleaned.slice(2)}`;
     }
-    // Usamos 'prev' para no perder otros campos como alertType
     setScheduleInput(prev => ({ ...prev, time: formatted.slice(0, 5) }));
   };
 
-  // --- CAMBIO EN handleAddTime ---
   const handleAddTime = () => {
     const time = scheduleInput.time || '';
     const [hours, minutes] = time.split(':').map(Number);
 
     if (!/^\d{2}:\d{2}$/.test(time) || hours > 23 || minutes > 59) {
-      Alert.alert('Hora incorrecta', 'Por favor, ingrese una hora válida en formato HH:MM (ej: 08:00 o 14:30).');
+      Alert.alert('Hora incorrecta', 'Por favor, ingrese una hora válida en formato HH:MM (ej: 08:00 o 23:30).');
       return;
     }
     
-    const utcTime = convertLocalTimeToUTCString(time);
+    const localTime = time; // Guardamos la hora local para la UI
 
-    if (schedules.some(s => s.time === utcTime)) {
+    if (schedules.some(s => s.time === localTime)) { // Comprobamos duplicados en hora local
       Alert.alert('Hora duplicada', 'Este horario ya ha sido añadido.');
       return;
     }
 
-    // Añadimos el alertType al nuevo horario
+    // El estado 'schedules' usa la hora local para que getFrequencyText funcione
     const newSchedule: ScheduleInput = { 
-        time: utcTime,
+        time: localTime, // <-- Se mantiene HORA LOCAL para la UI
         frequencyType: scheduleInput.frequencyType!, 
         frequencyValue: scheduleInput.frequencyType === 'HOURLY' ? scheduleInput.frequencyValue! : 1, 
         daysOfWeek: scheduleInput.frequencyType === 'WEEKLY' ? Array.from(selectedDays).join(',') : undefined, 
-        alertType: scheduleInput.alertType || 'NOTIFICATION', // <-- AÑADIDO
+        alertType: scheduleInput.alertType || 'NOTIFICATION',
     };
     
     setSchedules([...schedules, newSchedule].sort((a, b) => a.time.localeCompare(b.time)));
     
-    // Reiniciamos el formulario, manteniendo el tipo de alerta por si quiere añadir otro
     setScheduleInput(prev => ({ 
-        ...prev, // Mantiene el alertType y frequencyType
+        ...prev,
         time: '', 
         frequencyValue: 1,
     }));
     setSelectedDays(new Set());
     Keyboard.dismiss();
   };
-  // --- FIN CAMBIO EN handleAddTime ---
 
   const handleRemoveSchedule = (index: number) => {
     setSchedules(schedules.filter((_, i) => i !== index));
@@ -142,9 +128,15 @@ export default function AddMedicationScreen() {
         type: medType, 
       };
 
-      // OJO: La función addMedication debe manejar el envío de 'schedules'
-      // Tu función original ya lo hace correctamente.
-      const newMed = await apiService.addMedication(patientIdToAddFor, newMedPayload, schedules);
+      // --- ¡CORRECCIÓN IMPORTANTE! ---
+      // Convertimos las horas a UTC SÓLO al momento de guardar
+      const schedulesInUTC = schedules.map(s => ({
+        ...s,
+        time: convertLocalTimeToUTCString(s.time) // "23:30" (local) -> "02:30" (UTC)
+      }));
+      // -------------------------------
+
+      const newMed = await apiService.addMedication(patientIdToAddFor, newMedPayload, schedulesInUTC); // Enviamos el array en UTC
 
       if (newMed && newMed.id) {
         Alert.alert('Éxito', 'Medicamento guardado en el servidor.');
@@ -160,13 +152,11 @@ export default function AddMedicationScreen() {
     }
   };
 
-  // --- CAMBIO EN getFrequencyText ---
+  // Esta función lee la hora local del estado (antes de guardar)
+  // por lo que no necesita cambios.
   const getFrequencyText = (schedule: ScheduleInput): string => {
-    const utcTime = schedule.time;
-    const localTime = convertUTCTimeToLocalString(utcTime);
+    const localTime = schedule.time;
     const formattedTime = formatTimeToAMPM(localTime);
-    
-    // Añadimos el texto de la alerta
     const alertText = schedule.alertType === 'ALARM' ? ' (Alarma)' : ' (Notificación)';
 
     switch (schedule.frequencyType) {
@@ -176,7 +166,6 @@ export default function AddMedicationScreen() {
         default: return '';
     }
   }
-  // --- FIN CAMBIO EN getFrequencyText ---
 
   const toggleDay = (dayIndex: number) => {
     const newDays = new Set(selectedDays);
@@ -194,7 +183,6 @@ export default function AddMedicationScreen() {
         </View>
 
         <View style={styles.form}>
-            {/* ... (Campos Name, Dosage, Quantity, Type no cambian) ... */}
             <Text style={styles.inputLabel}>Nombre del Medicamento *</Text>
             <TextInput style={styles.textInput} value={name} onChangeText={setName} placeholder="Ej: Paracetamol" />
 
@@ -206,24 +194,9 @@ export default function AddMedicationScreen() {
 
             <Text style={styles.inputLabel}>Tipo de Medicamento *</Text>
             <View style={styles.freqContainer}>
-                <TouchableOpacity 
-                    style={[styles.freqButton, medType === 'PILL' && styles.freqButtonActive]} 
-                    onPress={() => setMedType('PILL')}
-                >
-                    <Text style={[styles.freqButtonText, medType === 'PILL' && styles.freqButtonTextActive]}>Pastilla</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                    style={[styles.freqButton, medType === 'SYRUP' && styles.freqButtonActive]} 
-                    onPress={() => setMedType('SYRUP')}
-                >
-                    <Text style={[styles.freqButtonText, medType === 'SYRUP' && styles.freqButtonTextActive]}>Jarabe</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                    style={[styles.freqButton, medType === 'INHALER' && styles.freqButtonActive]} 
-                    onPress={() => setMedType('INHALER')}
-                >
-                    <Text style={[styles.freqButtonText, medType === 'INHALER' && styles.freqButtonTextActive]}>Inhalador</Text>
-                </TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, medType === 'PILL' && styles.freqButtonActive]} onPress={() => setMedType('PILL')}><Text style={[styles.freqButtonText, medType === 'PILL' && styles.freqButtonTextActive]}>Pastilla</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, medType === 'SYRUP' && styles.freqButtonActive]} onPress={() => setMedType('SYRUP')}><Text style={[styles.freqButtonText, medType === 'SYRUP' && styles.freqButtonTextActive]}>Jarabe</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, medType === 'INHALER' && styles.freqButtonActive]} onPress={() => setMedType('INHALER')}><Text style={[styles.freqButtonText, medType === 'INHALER' && styles.freqButtonTextActive]}>Inhalador</Text></TouchableOpacity>
             </View>
 
             <Text style={styles.inputLabel}>Instrucciones (Opcional)</Text>
@@ -231,35 +204,18 @@ export default function AddMedicationScreen() {
             
             <Text style={styles.sectionTitle}>Horarios y Frecuencia</Text>
             
-            {/* --- CAMBIO EN BOTONES DE FRECUENCIA --- */}
-            {/* Usamos 'prev' para no borrar el 'alertType' seleccionado */}
             <Text style={styles.inputLabel}>Frecuencia</Text>
             <View style={styles.freqContainer}>
                 <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'DAILY' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, frequencyType: 'DAILY', time: '', frequencyValue: 1 }))}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'DAILY' && styles.freqButtonTextActive]}>Cada Día</Text></TouchableOpacity>
                 <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'WEEKLY' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, frequencyType: 'WEEKLY', time: '', frequencyValue: 1 }))}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'WEEKLY' && styles.freqButtonTextActive]}>Días Específicos</Text></TouchableOpacity>
                 <TouchableOpacity style={[styles.freqButton, scheduleInput.frequencyType === 'HOURLY' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, frequencyType: 'HOURLY', time: '', frequencyValue: 8 }))}><Text style={[styles.freqButtonText, scheduleInput.frequencyType === 'HOURLY' && styles.freqButtonTextActive]}>Intervalo Horas</Text></TouchableOpacity>
             </View>
-            {/* --- FIN CAMBIO BOTONES FRECUENCIA --- */}
 
-
-            {/* --- NUEVA UI: TIPO DE ALERTA --- */}
             <Text style={styles.inputLabel}>Tipo de Alerta</Text>
             <View style={styles.freqContainer}>
-                <TouchableOpacity 
-                    style={[styles.freqButton, scheduleInput.alertType === 'NOTIFICATION' && styles.freqButtonActive]} 
-                    onPress={() => setScheduleInput(prev => ({ ...prev, alertType: 'NOTIFICATION' }))}
-                >
-                    <Text style={[styles.freqButtonText, scheduleInput.alertType === 'NOTIFICATION' && styles.freqButtonTextActive]}>Notificación</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                    style={[styles.freqButton, scheduleInput.alertType === 'ALARM' && styles.freqButtonActive]} 
-                    onPress={() => setScheduleInput(prev => ({ ...prev, alertType: 'ALARM' }))}
-                >
-                    <Text style={[styles.freqButtonText, scheduleInput.alertType === 'ALARM' && styles.freqButtonTextActive]}>Alarma</Text>
-                </TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, scheduleInput.alertType === 'NOTIFICATION' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, alertType: 'NOTIFICATION' }))}><Text style={[styles.freqButtonText, scheduleInput.alertType === 'NOTIFICATION' && styles.freqButtonTextActive]}>Notificación</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.freqButton, scheduleInput.alertType === 'ALARM' && styles.freqButtonActive]} onPress={() => setScheduleInput(prev => ({ ...prev, alertType: 'ALARM' }))}><Text style={[styles.freqButtonText, scheduleInput.alertType === 'ALARM' && styles.freqButtonTextActive]}>Alarma</Text></TouchableOpacity>
             </View>
-            {/* --- FIN NUEVA UI --- */}
-
 
             {scheduleInput.frequencyType === 'WEEKLY' && (
                 <>
@@ -320,33 +276,34 @@ export default function AddMedicationScreen() {
   );
 }
 
+// ... (Los estilos permanecen exactamente iguales) ...
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  header: { padding: 20 },
-  title: { fontSize: 24, fontWeight: 'bold' },
-  form: { paddingHorizontal: 20 },
-  inputLabel: { fontSize: 16, fontWeight: '600', color: '#374151', marginBottom: 8, marginTop: 16 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginTop: 24, marginBottom: 8, borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 16 },
-  textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 12, padding: 16, fontSize: 16, backgroundColor: '#FFFFFF' },
-  textArea: { height: 100, textAlignVertical: 'top' },
-  freqContainer: { flexDirection: 'row', gap: 8 },
-  freqButton: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D1D5DB' },
-  freqButtonActive: { backgroundColor: '#EBF4FF', borderColor: '#2563EB' },
-  freqButtonText: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  freqButtonTextActive: { color: '#1E40AF' },
-  weekContainer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
-  dayButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#D1D5DB' },
-  dayButtonActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
-  dayButtonText: { fontSize: 16, fontWeight: 'bold', color: '#374151' },
-  dayButtonTextActive: { color: '#FFFFFF' },
-  addButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: '#2563EB', borderRadius: 12, gap: 8, marginTop: 16 },
-  addButtonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
-  scheduleItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EBF4FF', padding: 12, borderRadius: 8, marginHorizontal: 20, marginTop: 12, justifyContent: 'space-between' },
-  scheduleText: { flex: 1, fontSize: 16, fontWeight: '600', color: '#1E40AF', marginLeft: 8 },
-  footer: { flexDirection: 'row', padding: 20, borderTopWidth: 1, borderTopColor: '#E5E7EB', backgroundColor: '#FFFFFF' },
-  cancelButton: { flex: 1, padding: 16, borderRadius: 12, alignItems: 'center', marginRight: 8, borderWidth: 1, borderColor: '#D1D5DB' },
-  cancelButtonText: { fontSize: 16, fontWeight: 'bold', color: '#374151' },
-  saveButton: { flex: 1, padding: 16, borderRadius: 12, alignItems: 'center', backgroundColor: '#16A34A', marginLeft: 8 },
-  saveButtonDisabled: { backgroundColor: '#9CA3AF' },
-  saveButtonText: { fontSize: 16, fontWeight: 'bold', color: '#FFFFFF' },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
+  header: { padding: 20 },
+  title: { fontSize: 24, fontWeight: 'bold' },
+  form: { paddingHorizontal: 20 },
+  inputLabel: { fontSize: 16, fontWeight: '600', color: '#374151', marginBottom: 8, marginTop: 16 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#1F2937', marginTop: 24, marginBottom: 8, borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 16 },
+  textInput: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 12, padding: 16, fontSize: 16, backgroundColor: '#FFFFFF' },
+  textArea: { height: 100, textAlignVertical: 'top' },
+  freqContainer: { flexDirection: 'row', gap: 8 },
+  freqButton: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D1D5DB' },
+  freqButtonActive: { backgroundColor: '#EBF4FF', borderColor: '#2563EB' },
+  freqButtonText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  freqButtonTextActive: { color: '#1E40AF' },
+  weekContainer: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  dayButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#D1D5DB' },
+  dayButtonActive: { backgroundColor: '#2563EB', borderColor: '#2563EB' },
+  dayButtonText: { fontSize: 16, fontWeight: 'bold', color: '#374151' },
+  dayButtonTextActive: { color: '#FFFFFF' },
+  addButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: '#2563EB', borderRadius: 12, gap: 8, marginTop: 16 },
+  addButtonText: { color: '#FFFFFF', fontWeight: 'bold', fontSize: 16 },
+  scheduleItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EBF4FF', padding: 12, borderRadius: 8, marginHorizontal: 20, marginTop: 12, justifyContent: 'space-between' },
+  scheduleText: { flex: 1, fontSize: 16, fontWeight: '600', color: '#1E40AF', marginLeft: 8 },
+  footer: { flexDirection: 'row', padding: 20, borderTopWidth: 1, borderTopColor: '#E5E7EB', backgroundColor: '#FFFFFF' },
+  cancelButton: { flex: 1, padding: 16, borderRadius: 12, alignItems: 'center', marginRight: 8, borderWidth: 1, borderColor: '#D1D5DB' },
+  cancelButtonText: { fontSize: 16, fontWeight: 'bold', color: '#374151' },
+  saveButton: { flex: 1, padding: 16, borderRadius: 12, alignItems: 'center', backgroundColor: '#16A34A', marginLeft: 8 },
+  saveButtonDisabled: { backgroundColor: '#9CA3AF' },
+  saveButtonText: { fontSize: 16, fontWeight: 'bold', color: '#FFFFFF' },
 });

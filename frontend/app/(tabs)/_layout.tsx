@@ -1,3 +1,5 @@
+// frontend/app/(tabs)/_layout.tsx (CORREGIDO)
+
 import { Tabs } from 'expo-router';
 import { Bot, History, Home, Pill, User, Users } from 'lucide-react-native';
 import React from 'react';
@@ -44,12 +46,15 @@ export default function TabLayout() {
         />
       )}
 
-      {/* 3. Historial */}
+      {/* 3. Historial (OCULTO DE LA BARRA) */}
       <Tabs.Screen
         name="historial"
         options={{
           title: 'Historial',
           tabBarIcon: ({ color }) => <History size={28} color={color} />,
+          // --- CAMBIO CLAVE ---
+          // Esta línea oculta la pestaña de la barra, pero sigue existiendo
+          href: null, 
         }}
       />
       

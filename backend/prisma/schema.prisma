@@ -1,122 +1,123 @@
 // schema.prisma
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum MedicationType {
-  PILL
-  SYRUP
-  INHALER
+  PILL
+  SYRUP
+  INHALER
 }
 
-// --- ¡NUEVO! ---
-// Define los tipos de alerta permitidos
 enum AlertType {
-  NOTIFICATION // Notificación estándar (silenciosa/banner)
-  ALARM        // Alarma (sonido completo, más intrusivo)
+  NOTIFICATION
+  ALARM
 }
 
 model User {
-  // ... (tu modelo User no cambia)
-  id                String   @id @default(cuid())
-  firstName         String
-  lastName          String
-  email             String?  @unique
-  phone             String?
-  role              String   @default("PATIENT") // "PATIENT" | "CAREGIVER"
-  password          String?
+  id                String    @id @default(cuid())
+  firstName         String
+  lastName          String
+  email             String?   @unique
+  phone             String?
+  role              String    @default("PATIENT") // "PATIENT" | "CAREGIVER"
+  password          String?
   pushToken         String?
-  birthDate         String?
-  address           String?
-  emergencyContact  String?
-  emergencyPhone    String?
-  medicalConditions String?
-  allergies         String?
-  createdAt         DateTime @default(now()) @db.Timestamptz
-  updatedAt         DateTime @updatedAt @db.Timestamptz
 
-  medications Medication[]
-  patientLinks   PatientCaregiver[] @relation("PC_Patient")
-  caregiverLinks PatientCaregiver[] @relation("PC_Caregiver")
+  // --- ¡CORREGIDO AQUÍ! ---
+  // Cambiado de String? a DateTime? con zona horaria
+  birthDate         DateTime? @db.Timestamptz
+
+  address           String?
+  emergencyContact  String?
+  emergencyPhone    String?
+  medicalConditions String?
+  allergies         String?
+  createdAt         DateTime  @default(now()) @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @db.Timestamptz
+
+  medications  Medication[]
+  patientLinks PatientCaregiver[] @relation("PC_Patient")
+  caregiverLinks PatientCaregiver[] @relation("PC_Caregiver")
 }
 
 model Medication {
   // ... (tu modelo Medication no cambia)
-  id           String         @id @default(cuid())
-  patient      User           @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  patientId    String
-  name         String
-  type         MedicationType @default(PILL)
-  dosage       String?
-  quantity     Int?
-  presentation String?
-  instructions String?
-  color        String?
-  active       Boolean       @default(true)
-  createdAt    DateTime       @default(now()) @db.Timestamptz
-  updatedAt    DateTime       @updatedAt @db.Timestamptz
-  deletedAt    DateTime?       @db.Timestamptz
+  id           String         @id @default(cuid())
+  patient      User           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patientId    String
+  name         String
+  type         MedicationType @default(PILL)
+  dosage       String?
+  quantity     Int?
+  presentation String?
+  instructions String?
+  color        String?
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now()) @db.Timestamptz
+  updatedAt    DateTime       @updatedAt @db.Timestamptz
+  deletedAt    DateTime?      @db.Timestamptz
 
-  schedules Schedule[]
-  intakes   IntakeLog[]
-  @@index([patientId])
+  schedules Schedule[]
+  intakes   IntakeLog[]
+  @@index([patientId])
 }
 
 model Schedule {
-  id             String     @id @default(cuid())
-  medication     Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
-  medicationId   String
-  time           String
-  frequencyType  String
-  frequencyValue Int?
-  daysOfWeek     String?
-  endDate        String?
-  alertType      AlertType  @default(NOTIFICATION) // <-- ¡NUEVO CAMPO!
-  active         Boolean    @default(true)
-  createdAt      DateTime   @default(now()) @db.Timestamptz
-  updatedAt      DateTime   @updatedAt @db.Timestamptz
+  id             String    @id @default(cuid())
+  medication     Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  medicationId   String
+  time           String
+  frequencyType  String
+  frequencyValue Int?
+  daysOfWeek     String?
+  endDate        String?
+  alertType      AlertType  @default(NOTIFICATION) // <-- ¡NUEVO CAMPO!
+  active         Boolean    @default(true)
+  createdAt      DateTime   @default(now()) @db.Timestamptz
+  updatedAt      DateTime   @updatedAt @db.Timestamptz
 
-  intakes IntakeLog[]
+  intakes IntakeLog[]
 
-  @@index([medicationId])
+  @@index([medicationId])
 }
 
 // ... (tus modelos IntakeLog y PatientCaregiver no cambian) ...
 model IntakeLog {
-  id           String     @id @default(cuid())
-  medication   Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
-  medicationId String
-  schedule     Schedule?  @relation(fields: [scheduleId], references: [id])
-  scheduleId   String?
-  scheduledFor DateTime   @db.Timestamptz
-  action       String // "CONFIRMED" | "SNOOZED" | "SKIPPED" | "POSTPONED"
-  actionAt     DateTime?  @db.Timestamptz
-  note         String?
-  createdAt    DateTime   @default(now()) @db.Timestamptz
+  id           String     @id @default(cuid())
+  medication   Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  medicationId String
+  schedule     Schedule?  @relation(fields: [scheduleId], references: [id])
+  scheduleId   String?
+  scheduledFor DateTime   @db.Timestamptz
+  action       String // "CONFIRMED" | "SNOOZED" | "SKIPPED" | "POSTPONED" | "PENDING"
+  actionAt     DateTime?  @db.Timestamptz
+  note         String?
+  createdAt    DateTime   @default(now()) @db.Timestamptz
 
-  @@index([medicationId, scheduledFor])
-  @@unique([medicationId, scheduledFor])
+  @@index([medicationId, scheduledFor])
+  @@unique([medicationId, scheduledFor]) // Asegura una sola entrada por hora/medicamento
 }
 
 model PatientCaregiver {
-  id String @id @default(cuid())
+  id String @id @default(cuid())
 
-  patient   User   @relation("PC_Patient", fields: [patientId], references: [id], onDelete: Cascade)
-  patientId String
+  patient   User   @relation("PC_Patient", fields: [patientId], references: [id], onDelete: Cascade)
+  patientId String
 
-  caregiver   User   @relation("PC_Caregiver", fields: [caregiverId], references: [id], onDelete: Cascade)
-  caregiverId String
+  caregiver   User   @relation("PC_Caregiver", fields: [caregiverId], references: [id], onDelete: Cascade)
+  caregiverId String
 
-  relation  String?
-  createdAt DateTime @default(now()) @db.Timestamptz
+  relation  String?
+  createdAt DateTime @default(now()) @db.Timestamptz
 
-  @@unique([patientId, caregiverId])
-  @@index([caregiverId])
-  @@index([patientId])
+  @@unique([patientId, caregiverId])
+  @@index([caregiverId])
+  @@index([patientId])
 }

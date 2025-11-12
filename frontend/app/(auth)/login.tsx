@@ -1,4 +1,4 @@
-// app/(auth)/login-form.tsx (MODIFICADO)
+// app/(auth)/login.tsx (CORREGIDO)
 
 import React, { useState } from "react";
 import {
@@ -10,63 +10,64 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-} from "react-native"; // <-- Añadí ActivityIndicator
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Link, router } from "expo-router";
+// --- CAMBIO CLAVE 1 ---
+import { Link, router, Stack } from "expo-router"; // <-- Añadimos 'Stack'
 import { Eye, EyeOff, User, Lock, Pill, ArrowLeft } from "lucide-react-native";
 
-// --- CAMBIOS CLAVE ---
-import * as apiService from "../../services/apiService"; // <-- CAMBIO: Usamos el servicio de API
-import { useAuth } from "../../context/AuthContext"; // <-- CAMBIO: Usamos el AuthContext ya modificado
+import * as apiService from "../../services/apiService";
+import { useAuth } from "../../context/AuthContext";
 
 export default function LoginFormScreen() {
-  // --- CAMBIOS CLAVE ---
-  // Usamos 'setUser' de nuestro nuevo AuthContext. 'database' ya no es necesario aquí.
   const { setUser } = useAuth();
-
-  // El resto de los 'useState' se mantiene igual
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // --- CAMBIOS CLAVE ---
-  // Esta es la nueva función de login que usa la API
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Por favor complete todos los campos');
+      Alert.alert("Error", "Por favor complete todos los campos");
       return;
     }
 
     setLoading(true);
-    
+
     try {
-      const loggedInUser = await apiService.loginUser(email.toLowerCase().trim(), password);
+      const loggedInUser = await apiService.loginUser(
+        email.toLowerCase().trim(),
+        password
+      );
 
       if (loggedInUser && loggedInUser.role) {
         setUser(loggedInUser);
 
-        if (loggedInUser.role.trim().toUpperCase() === 'CAREGIVER') {
-          // --- ¡ESTA ES LA LÍNEA CORREGIDA! ---
-          router.replace('/(caregiver)/pacientes');
+        if (loggedInUser.role.trim().toUpperCase() === "CAREGIVER") {
+          router.replace("/(caregiver)/pacientes");
         } else {
-          router.replace('/(tabs)');
+          router.replace("/(tabs)");
         }
       } else {
-        Alert.alert('Error', 'El correo electrónico o la contraseña son incorrectos.');
+        Alert.alert(
+          "Error",
+          "El correo electrónico o la contraseña son incorrectos."
+        );
       }
     } catch (error) {
       console.error("Error en el login via API:", error);
-      Alert.alert('Error', 'Ocurrió un error al conectar con el servidor.');
+      Alert.alert("Error", "Ocurrió un error al conectar con el servidor.");
     } finally {
       setLoading(false);
     }
   };
 
-  // --- SIN CAMBIOS EN LA PARTE VISUAL ---
-  // Todo el JSX de abajo es exactamente el mismo que ya tenías.
   return (
     <SafeAreaView style={styles.container}>
+      {/* --- CAMBIO CLAVE 2 --- */}
+      {/* Esta línea oculta el encabezado automático de Expo Router */}
+      <Stack.Screen options={{ headerShown: false }} />
+
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
@@ -144,7 +145,6 @@ export default function LoginFormScreen() {
             onPress={handleLogin}
             disabled={loading}
           >
-            {/* Pequeño cambio para mostrar ActivityIndicator en lugar de texto */}
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (

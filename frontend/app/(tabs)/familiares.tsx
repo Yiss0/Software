@@ -1,5 +1,11 @@
+// frontend/app/tabs/familiares.tsx (CORREGIDA LA ALINEACIÓN DEL TÍTULO)
+
 import React, { useState, useCallback } from 'react';
-import { View, Text, FlatList, ActivityIndicator, StyleSheet, SafeAreaView, Modal, TextInput, Alert, TouchableOpacity } from 'react-native';
+// --- IMPORTACIÓN CORREGIDA ---
+import { View, Text, FlatList, ActivityIndicator, StyleSheet, Modal, TextInput, Alert, TouchableOpacity } from 'react-native';
+// Se quitó 'SafeAreaView' de react-native
+import { SafeAreaView } from 'react-native-safe-area-context'; // Se añadió la importación correcta
+// -----------------------------
 import { useAuth } from '../../context/AuthContext';
 import { useFocusEffect } from 'expo-router';
 import * as apiService from '../../services/apiService';
@@ -15,6 +21,7 @@ export default function FamiliaresScreen() {
   const [caregiverEmail, setCaregiverEmail] = useState('');
   const [isLinking, setIsLinking] = useState(false);
 
+  // ... (toda la lógica: loadCaregivers, useFocusEffect, handleLinkCaregiver, renderCaregiverCard... se mantiene 100% igual) ...
   const loadCaregivers = useCallback(async () => {
     if (user?.id && user.role === 'PATIENT') {
       try {
@@ -33,7 +40,6 @@ export default function FamiliaresScreen() {
     }
   }, [user]);
 
-  // --- CORRECCIÓN DEL ERROR DE useFocusEffect ---
   useFocusEffect(
     useCallback(() => {
         loadCaregivers();
@@ -98,10 +104,16 @@ export default function FamiliaresScreen() {
   }
 
   if (isLoading) {
-    return <View style={styles.container}><ActivityIndicator size="large" color="#0000ff" /></View>;
+    // Aplicamos SafeAreaView también al estado de carga
+    return (
+      <SafeAreaView style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
   }
 
   return (
+    // Ahora <SafeAreaView> es el componente correcto
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Familiares y Cuidadores</Text>
@@ -122,6 +134,7 @@ export default function FamiliaresScreen() {
         <Plus size={32} color="#FFFFFF" />
       </TouchableOpacity>
 
+      {/* El Modal no cambia */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -153,8 +166,14 @@ export default function FamiliaresScreen() {
   );
 }
 
+// --- ESTILOS MODIFICADOS ---
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#F8FAFC' },
+    // Estilo añadido para el loading
+    loadingContainer: { 
+      justifyContent: 'center', 
+      alignItems: 'center' 
+    },
     header: { paddingHorizontal: 20, paddingVertical: 20 },
     title: { fontSize: 28, fontWeight: '700', color: '#1F2937' },
     card: { backgroundColor: 'white', borderRadius: 16, padding: 20, marginBottom: 16, elevation: 3, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 },

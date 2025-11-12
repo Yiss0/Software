@@ -1,3 +1,5 @@
+// frontend/app/tabs/medicamentos.tsx (CORREGIDO CON LÓGICA UTC)
+
 import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,15 +11,20 @@ import * as apiService from '../../services/apiService';
 
 type MedicationListItem = apiService.MedicationWithSchedules;
 
+// --- FUNCIÓN AÑADIDA ---
+// Convierte un string de hora UTC (ej: "02:30") a hora local (ej: "23:30")
 const convertUTCTimeToLocalString = (utcTime: string): string => {
   if (!/^\d{2}:\d{2}$/.test(utcTime)) return utcTime;
   const [hours, minutes] = utcTime.split(':').map(Number);
   const date = new Date();
-  date.setUTCHours(hours, minutes, 0, 0);
-  const localHours = String(date.getHours()).padStart(2, '0');
+  date.setUTCHours(hours, minutes, 0, 0); // Establece la hora como UTC
+  
+  const localHours = String(date.getHours()).padStart(2, '0'); // Obtiene la hora local
   const localMinutes = String(date.getMinutes()).padStart(2, '0');
+  
   return `${localHours}:${localMinutes}`;
 };
+// -------------------------
 
 const formatTimeToAMPM = (time: string) => {
     if (!/^\d{2}:\d{2}$/.test(time)) return time;
@@ -29,8 +36,12 @@ const formatTimeToAMPM = (time: string) => {
 };
 
 const getFrequencyText = (schedule: apiService.Schedule): string => {
-  const localTime = convertUTCTimeToLocalString(schedule.time);
-  const formattedTime = formatTimeToAMPM(localTime);
+  // --- ¡CORRECCIÓN IMPORTANTE! ---
+  // schedule.time es UTC ("02:30"), lo convertimos a local ("23:30")
+  const localTime = convertUTCTimeToLocalString(schedule.time); 
+  // -------------------------------
+  const formattedTime = formatTimeToAMPM(localTime); // Formatea "23:30" a "11:30 p. m."
+  
   switch (schedule.frequencyType) {
       case 'DAILY': return `Cada día a las ${formattedTime}`;
       case 'HOURLY': return `Cada ${schedule.frequencyValue} horas (desde ${formattedTime})`;
@@ -148,25 +159,26 @@ export default function MedicamentosScreen() {
   );
 }
 
+// ... (Los estilos permanecen exactamente iguales) ...
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' }, 
-  header: { paddingHorizontal: 20, paddingVertical: 20 }, 
-  title: { fontSize: 28, fontWeight: '700', color: '#1F2937' }, 
-  listContainer: { paddingHorizontal: 20, paddingBottom: 100 }, 
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: '50%' }, 
-  emptyText: { fontSize: 18, fontWeight: '600', color: '#6B7280' }, 
-  emptySubText: { fontSize: 16, color: '#9CA3AF', marginTop: 8 }, 
-  fab: { position: 'absolute', bottom: 30, right: 30, width: 64, height: 64, borderRadius: 32, backgroundColor: '#2563EB', justifyContent: 'center', alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, }, 
-  medItem: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, },
-  medInfoContainer: { flex: 1, flexDirection: 'row', alignItems: 'flex-start' },
-  medIconContainer: { padding: 12, borderRadius: 8, backgroundColor: '#EBF4FF', marginRight: 16, }, 
-  medInfo: { flex: 1 }, 
-  medName: { fontSize: 18, fontWeight: '600', color: '#1F2937' }, 
-  medDosage: { fontSize: 14, color: '#6B7280', marginTop: 4 }, 
-  medInstructions: { fontSize: 14, color: '#6B7280', marginTop: 8, fontStyle: 'italic' }, 
-  schedulesContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 8, backgroundColor: '#F3F4F6', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignSelf: 'flex-start' }, 
-  scheduleText: { fontSize: 14, color: '#4B5563', fontWeight: '500' },
-  actionButtons: { flexDirection: 'column', gap: 12, marginLeft: 16 },
-  editButton: { padding: 10, backgroundColor: '#EBF4FF', borderRadius: 20 },
-  deleteButton: { padding: 10, backgroundColor: '#FEE2E2', borderRadius: 20 },
+  container: { flex: 1, backgroundColor: '#F8FAFC' }, 
+  header: { paddingHorizontal: 20, paddingVertical: 20 }, 
+  title: { fontSize: 28, fontWeight: '700', color: '#1F2937' }, 
+  listContainer: { paddingHorizontal: 20, paddingBottom: 100 }, 
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: '50%' }, 
+  emptyText: { fontSize: 18, fontWeight: '600', color: '#6B7280' }, 
+  emptySubText: { fontSize: 16, color: '#9CA3AF', marginTop: 8 }, 
+  fab: { position: 'absolute', bottom: 30, right: 30, width: 64, height: 64, borderRadius: 32, backgroundColor: '#2563EB', justifyContent: 'center', alignItems: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 4, }, 
+  medItem: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2, },
+  medInfoContainer: { flex: 1, flexDirection: 'row', alignItems: 'flex-start' },
+  medIconContainer: { padding: 12, borderRadius: 8, backgroundColor: '#EBF4FF', marginRight: 16, }, 
+  medInfo: { flex: 1 }, 
+  medName: { fontSize: 18, fontWeight: '600', color: '#1F2937' }, 
+  medDosage: { fontSize: 14, color: '#6B7280', marginTop: 4 }, 
+  medInstructions: { fontSize: 14, color: '#6B7280', marginTop: 8, fontStyle: 'italic' }, 
+  schedulesContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 8, backgroundColor: '#F3F4F6', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, alignSelf: 'flex-start' }, 
+  scheduleText: { fontSize: 14, color: '#4B5563', fontWeight: '500' },
+  actionButtons: { flexDirection: 'column', gap: 12, marginLeft: 16 },
+  editButton: { padding: 10, backgroundColor: '#EBF4FF', borderRadius: 20 },
+  deleteButton: { padding: 10, backgroundColor: '#FEE2E2', borderRadius: 20 },
 });

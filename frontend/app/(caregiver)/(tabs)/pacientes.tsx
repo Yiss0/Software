@@ -1,18 +1,25 @@
+// frontend/app/caregiver/tabs/pacientes.tsx (CORREGIDA LA ALINEACIÓN DEL TÍTULO)
+
 import React, { useState, useCallback, useRef } from 'react';
-import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, StyleSheet, SafeAreaView, TextInput, Alert, Modal } from 'react-native';
+// --- IMPORTACIÓN CORREGIDA ---
+import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, StyleSheet, TextInput, Alert, Modal } from 'react-native';
+// Se quitó 'SafeAreaView' de react-native
+import { SafeAreaView } from 'react-native-safe-area-context'; // Se añadió la importación correcta
+// -----------------------------
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../../context/AuthContext';
 import { usePatient } from '../../../context/PatientContext';
 import * as apiService from '../../../services/apiService';
-import { Plus, X } from 'lucide-react-native';
+import { Plus, X, User, ChevronRight } from 'lucide-react-native'; 
 
-import * as pushService from '../../../services/pushNotificationService'; // Import existente
-import Constants from 'expo-constants'; // Import existente
+import * as pushService from '../../../services/pushNotificationService';
+import Constants from 'expo-constants'; 
 
 export default function PacientesScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const { selectPatient } = usePatient();
+  // 'selectPatient' no se usa, pero lo dejamos por si acaso
+  const { selectPatient } = usePatient(); 
   const [patients, setPatients] = useState<apiService.PatientForCaregiver[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [patientEmail, setPatientEmail] = useState('');
@@ -23,10 +30,11 @@ export default function PacientesScreen() {
   
   const [error, setError] = useState<string | null>(null);
 
+  // ... (Toda la lógica: loadLinkedPatients, useFocusEffect, handleLinkPatient, handleSelectPatient se mantiene 100% igual) ...
   const loadLinkedPatients = useCallback(async () => {
     if (user?.id && user.role === 'CAREGIVER') {
       setIsLoading(true);
-      setError(null); // Limpiamos errores anteriores
+      setError(null); 
       try {
         const patientList = await apiService.fetchPatientsForCaregiver(user.id);
         setPatients(patientList);
@@ -39,25 +47,18 @@ export default function PacientesScreen() {
     }
   }, [user]);
 
-  // --- HOOK MODIFICADO ---
-  // Se actualizó este hook para incluir la lógica de registro de notificaciones
   useFocusEffect(
     useCallback(() => {
-      // Creamos una función async interna para manejar la lógica
       const loadData = async () => {
         if (user?.id && user.role === 'CAREGIVER') {
-          // 1. Carga la lista de pacientes
           await loadLinkedPatients();
-
-          // 2. Registra para notificaciones push (solo la primera vez que entra)
           if (!pushRegistered.current) {
             console.log("[PacientesScreen] Registrando para notificaciones push...");
-            // Obtenemos el Project ID de la configuración de Expo
             const projectId = Constants.expoConfig?.extra?.eas?.projectId; 
             
             if (projectId) {
               await pushService.registerForPushNotifications(user.id, projectId);
-              pushRegistered.current = true; // Marcamos como registrado
+              pushRegistered.current = true; 
             } else {
               console.error("No se encontró 'projectId' en la configuración de Expo (extra.eas.projectId).");
               Alert.alert("Error de Configuración", "Falta el projectId de Expo en app.json, las notificaciones push no funcionarán.");
@@ -67,9 +68,8 @@ export default function PacientesScreen() {
       };
 
       loadData();
-    }, [user, loadLinkedPatients]) // Depende del usuario y la función de carga
+    }, [user, loadLinkedPatients]) 
   );
-  // --- FIN DE LA MODIFICACIÓN ---
 
   const handleLinkPatient = async () => {
     if (!patientEmail.trim() || !user?.id) {
@@ -91,13 +91,8 @@ export default function PacientesScreen() {
   };
 
   const handleSelectPatient = (patientProfile: apiService.UserProfile) => {
-    // YA NO seleccionamos el paciente en el contexto si no es necesario para otras tabs
-    // selectPatient(patientProfile); 
-
-    // CAMBIAMOS ESTA LÍNEA
     router.push({ 
-        // ANTES: pathname: '/historial-paciente', 
-        pathname: '/(caregiver)/patient-dashboard', // <-- NUEVA RUTA
+        pathname: '/(caregiver)/patient-dashboard', 
         params: { 
             patientId: patientProfile.id,
             patientName: `${patientProfile.firstName} ${patientProfile.lastName}`
@@ -106,10 +101,15 @@ export default function PacientesScreen() {
   };
 
   if (isLoading) {
-    return <View style={styles.container}><ActivityIndicator size="large" color="#2563EB" /></View>;
+    return (
+      <SafeAreaView style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </SafeAreaView>
+    );
   }
 
   return (
+    // Ahora <SafeAreaView> es el componente correcto
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Mis Pacientes</Text>
@@ -120,7 +120,13 @@ export default function PacientesScreen() {
         keyExtractor={(item) => item.patient.id}
         renderItem={({ item }) => (
           <TouchableOpacity style={styles.patientCard} onPress={() => handleSelectPatient(item.patient)}>
-            <Text style={styles.patientName}>{item.patient.firstName} {item.patient.lastName}</Text>
+            <View style={styles.patientInfo}>
+              <View style={styles.avatar}>
+                <User size={20} color="#1E40AF" />
+              </View>
+              <Text style={styles.patientName}>{item.patient.firstName} {item.patient.lastName}</Text>
+            </View>
+            <ChevronRight size={20} color="#6B7280" />
           </TouchableOpacity>
         )}
         contentContainerStyle={{ paddingHorizontal: 20 }}
@@ -136,6 +142,7 @@ export default function PacientesScreen() {
         <Plus size={32} color="#FFFFFF" />
       </TouchableOpacity>
 
+      {/* --- Modal --- */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -167,12 +174,50 @@ export default function PacientesScreen() {
   );
 }
 
+// ... (Los estilos 'styles' se mantienen exactamente iguales) ...
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#F8FAFC' },
+    loadingContainer: { 
+      justifyContent: 'center',
+      alignItems: 'center'
+    },
     header: { paddingHorizontal: 20, paddingVertical: 20 },
-    title: { fontSize: 28, fontWeight: '700', color: '#1F2937', textAlign: 'center' },
-    patientCard: { backgroundColor: 'white', padding: 20, borderRadius: 10, marginBottom: 10, elevation: 2, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 },
-    patientName: { fontSize: 18, fontWeight: '500' },
+    title: { 
+      fontSize: 28, 
+      fontWeight: '700', 
+      color: '#1F2937', 
+    },
+    patientCard: { 
+      backgroundColor: 'white', 
+      padding: 16, 
+      borderRadius: 12, 
+      marginBottom: 12, 
+      elevation: 3, 
+      shadowColor: '#000', 
+      shadowOpacity: 0.1, 
+      shadowRadius: 5,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between'
+    },
+    patientInfo: { 
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12
+    },
+    avatar: { 
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: '#EBF4FF',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    patientName: { 
+      fontSize: 18, 
+      fontWeight: '600', 
+      color: '#1F2937' 
+    },
     emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: '40%' },
     emptyText: { fontSize: 18, fontWeight: '600', color: '#6B7280' },
     emptySubText: { fontSize: 16, color: '#9CA3AF', marginTop: 8, textAlign: 'center' },
