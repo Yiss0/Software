@@ -3,6 +3,7 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
 import "dotenv/config";
+import multer from 'multer';
 import {
   PrismaClient,
   Medication,
@@ -17,7 +18,24 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Serve uploaded files statically under /uploads
+app.use('/uploads', express.static('uploads'));
+
 const prisma = new PrismaClient();
+
+// Multer setup for profile image uploads
+// Configure storage to preserve file extension
+const storage = multer.diskStorage({
+  destination: 'uploads/',
+  filename: (_req: any, file: any, cb: any) => {
+    // Extract file extension from original name
+    const ext = file.originalname.split('.').pop() || 'jpg';
+    // Generate a unique name with extension
+    const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${ext}`;
+    cb(null, uniqueName);
+  },
+});
+const upload = multer({ storage });
 
 const convertLocalTimeToUTCString = (localTime: string): string => {
   if (!/^\d{2}:\d{2}$/.test(localTime)) return localTime;
@@ -112,6 +130,79 @@ app.get("/patients/:id", async (req: Request, res: Response) => {
   if (!user) return res.status(404).json({ error: "Not found" });
   res.json(user);
 });
+// Actualizar perfil de paciente/usuario (PUT y PATCH soportados)
+app.put("/patients/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const {
+    firstName,
+    lastName,
+    email,
+    phone,
+    birthDate,
+    address,
+    emergencyContact,
+    emergencyPhone,
+    medicalConditions,
+    allergies,
+  } = req.body as Partial<{
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    birthDate: string; // ISO
+    address: string;
+    emergencyContact: string;
+    emergencyPhone: string;
+    medicalConditions: string;
+    allergies: string;
+  }>;
+
+  try {
+    // Construir objeto 'data' sólo con las propiedades definidas
+    const data: any = {};
+    if (firstName !== undefined) data.firstName = firstName;
+    if (lastName !== undefined) data.lastName = lastName;
+    if (email !== undefined) data.email = email.toLowerCase().trim();
+    if (phone !== undefined) data.phone = phone;
+  if (birthDate !== undefined) data.birthDate = birthDate ? new Date(birthDate) : null;
+  if ((req.body as any).profileImageUrl !== undefined) data.profileImageUrl = (req.body as any).profileImageUrl;
+    if (address !== undefined) data.address = address;
+    if (emergencyContact !== undefined) data.emergencyContact = emergencyContact;
+    if (emergencyPhone !== undefined) data.emergencyPhone = emergencyPhone;
+    if (medicalConditions !== undefined) data.medicalConditions = medicalConditions;
+    if (allergies !== undefined) data.allergies = allergies;
+
+  const updated = await prisma.user.update({ where: { id }, data: (data as any) });
+    const { password: _pw, ...userWithoutPassword } = updated as any;
+    return res.json(userWithoutPassword);
+  } catch (error: any) {
+    console.error(`Error en PUT /patients/${id}:`, error);
+    if (error?.code === 'P2025') return res.status(404).json({ error: 'Usuario no encontrado.' });
+    // Conflicto en email
+    if (error?.code === 'P2002') return res.status(409).json({ error: 'El correo electrónico ya está en uso.' });
+    return res.status(500).json({ error: 'No se pudo actualizar el perfil.' });
+  }
+});
+
+// También aceptar PATCH por compatibilidad (actualización parcial)
+app.patch("/patients/:id", async (req: Request, res: Response) => {
+  // Reutilizamos la misma lógica que PUT
+  const { id } = req.params;
+  try {
+    // Llamar al handler PUT simplificado: usar prisma.update directamente con el body
+  const body = req.body || {};
+  if (body.birthDate !== undefined) body.birthDate = body.birthDate ? new Date(body.birthDate) : null;
+  if (body.profileImageUrl !== undefined) body.profileImageUrl = body.profileImageUrl;
+  const updated = await prisma.user.update({ where: { id }, data: (body as any) });
+    const { password: _pw, ...userWithoutPassword } = updated as any;
+    return res.json(userWithoutPassword);
+  } catch (error: any) {
+    console.error(`Error en PATCH /patients/${id}:`, error);
+    if (error?.code === 'P2025') return res.status(404).json({ error: 'Usuario no encontrado.' });
+    if (error?.code === 'P2002') return res.status(409).json({ error: 'El correo electrónico ya está en uso.' });
+    return res.status(500).json({ error: 'No se pudo actualizar el perfil.' });
+  }
+});
 app.post("/users/:id/push-token", async (req: Request, res: Response) => {
   const { id } = req.params;
   const { token } = req.body as { token?: string };
@@ -191,6 +282,138 @@ app.delete("/medications/:id", async (req: Request, res: Response) => {
     res.status(404).json({ error: "Not found" });
   }
 });
+
+/**
+ * 1. OBTENER UN SOLO MEDICAMENTO (CON SUS HORARIOS)
+ * * Usado para rellenar el formulario en la pantalla /edit-medication
+ */
+app.get("/medications/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  try {
+    const medication = await prisma.medication.findUnique({
+      where: { id },
+      include: { 
+        // ¡Importante! Incluimos los horarios para poder editarlos también
+        schedules: { 
+          where: { active: true } 
+        } 
+      }, 
+    });
+
+    if (!medication) {
+      return res.status(404).json({ error: "Medicamento no encontrado." });
+    }
+
+    res.json(medication);
+
+  } catch (error) {
+    console.error(`Error en GET /medications/${id}:`, error);
+    res.status(500).json({ error: "No se pudo obtener el medicamento." });
+  }
+});
+
+
+/**
+ * 2. ACTUALIZAR UN MEDICAMENTO (Y SUS HORARIOS)
+ * * Usado para guardar los cambios del formulario en /edit-medication
+ */
+
+// Primero, definimos un validador con 'zod' para los datos que esperamos
+const updateScheduleSchema = z.object({
+  time: z.string().regex(/^\d{2}:\d{2}$/, "Formato de hora inválido (HH:MM)"),
+  frequencyType: z.string(),
+  frequencyValue: z.number().optional().nullable(),
+  daysOfWeek: z.string().optional().nullable(),
+  alertType: z.nativeEnum(AlertType).optional().default("NOTIFICATION"),
+});
+
+const updateMedicationSchema = z.object({
+  // Datos del medicamento
+  medication: z.object({
+    name: z.string().min(1, "Nombre es requerido"),
+    dosage: z.string().optional().nullable(),
+    quantity: z.number().optional().nullable(),
+    presentation: z.string().optional().nullable(),
+    instructions: z.string().optional().nullable(),
+    color: z.string().optional().nullable(),
+    type: z.nativeEnum(MedicationType).optional().default("PILL"),
+  }),
+  // Array de horarios
+  schedules: z.array(updateScheduleSchema),
+});
+
+
+app.put("/medications/:id", async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  // 1. Validar los datos del body con Zod
+  const validation = updateMedicationSchema.safeParse(req.body);
+  if (!validation.success) {
+    return res.status(400).json({ error: validation.error.flatten() });
+  }
+
+  const { medication, schedules } = validation.data;
+
+  try {
+    // 2. Usar una transacción para actualizar todo o nada
+    const updatedMedication = await prisma.$transaction(async (tx) => {
+      
+      // 2a. Actualizar los datos principales del medicamento
+      const med = await tx.medication.update({
+        where: { id },
+        data: {
+          name: medication.name,
+          dosage: medication.dosage,
+          quantity: medication.quantity,
+          presentation: medication.presentation,
+          instructions: medication.instructions,
+          color: medication.color,
+          type: medication.type,
+        },
+      });
+
+      // 2b. Borrar TODOS los horarios antiguos de este medicamento
+      await tx.schedule.deleteMany({
+        where: { medicationId: id },
+      });
+
+      // 2c. Crear los NUEVOS horarios que vienen del frontend
+      for (const s of schedules) {
+        // ¡IMPORTANTE! Convertimos la hora local del form a UTC antes de guardar
+        const utcTimeString = convertLocalTimeToUTCString(s.time);
+
+        await tx.schedule.create({
+          data: {
+            medicationId: id,
+            time: utcTimeString, // Guardamos en UTC
+            frequencyType: s.frequencyType,
+            frequencyValue: s.frequencyValue,
+            daysOfWeek: s.daysOfWeek,
+            alertType: s.alertType,
+          },
+        });
+      }
+
+      return med;
+    });
+
+    // 3. Si todo salió bien, enviar la respuesta
+    res.json(updatedMedication);
+
+  } catch (error: any) {
+    console.error(`Error en PUT /medications/${id}:`, error);
+    if (error?.code === 'P2025') { // Error de Prisma por no encontrar el 'id'
+       return res.status(404).json({ error: "Medicamento no encontrado." });
+    }
+    res.status(500).json({ error: "No se pudo actualizar el medicamento." });
+  }
+});
+
+// ===================================================================
+// ============= 🚀 FIN DE NUEVOS ENDPOINTS (EDITAR) ================
+// ===================================================================
+
 app.post("/schedules", async (req: Request, res: Response) => {
   const {
     medicationId,
@@ -913,122 +1136,260 @@ app.post("/sync/full", async (req: Request, res: Response) => {
 
 // 1. Importamos las funciones NUEVAS y los TIPOS del servicio
 import {
-  analyzeChatIntent,         // Reemplaza a classifyIntent
-  extractMedicationDetails,
-  getConversationalResponse,
-  MedicationDetails,
-  IntentResponse            // Tipo de la respuesta del clasificador
+  analyzeChatIntent,
+  extractMedicationDetails,
+  getConversationalResponse,
+  MedicationDetails,
+  IntentResponse,
+  validateMedicationDetails,
+  parseTimeToHHMM
 } from "./services/chatbotService";
 
 app.post("/chatbot/interpret", async (req: Request, res: Response) => {
-  const { message, patientId, tzOffsetMinutes = 0 } = req.body as {
-    message?: string;
-    patientId?: string;
-    tzOffsetMinutes?: number; 
-  };
+  const { message, patientId, tzOffsetMinutes = 0 } = req.body as {
+    message?: string;
+    patientId?: string;
+    tzOffsetMinutes?: number; 
+  };
 
-  if (!message || !patientId) {
-    return res
-      .status(400)
-      .json({ error: "message y patientId son requeridos." });
-  }
+  if (!message?.trim() || !patientId?.trim()) {
+    return res.status(400).json({ 
+      error: "message y patientId son requeridos.",
+      response: "Necesito un mensaje y tu ID de paciente para ayudarte."
+    });
+  }
 
-  try {
-    // 2. Usamos la nueva función 'analyzeChatIntent'
-    const intentResponse: IntentResponse = await analyzeChatIntent(message);
-    console.log("🤖 Intención clasificada por la IA:", intentResponse.intent);
+  try {
+    console.log(`[chatbot] Procesando mensaje de ${patientId}: "${message}"`);
+    
+    // 1. Clasificar la intención
+    const intentResponse: IntentResponse = await analyzeChatIntent(message);
+    console.log(`[chatbot] Intención: ${intentResponse.intent} (confianza: ${intentResponse.confidence})`);
 
-    // 3. Hacemos el switch sobre la 'intent' dentro de la respuesta
-    switch (intentResponse.intent) {
-      case "ADD_MEDICINE":
-        // La lógica de 2 llamadas se mantiene:
-        // 1. Clasificar (ya hecho)
-        // 2. Extraer detalles (siguiente llamada)
-        const details = await extractMedicationDetails(message);
-        console.log("💊 Detalles extraídos por la IA:", details);
+    switch (intentResponse.intent) {
+      // ===== AGREGAR MEDICAMENTO =====
+      case "ADD_MEDICINE": {
+        console.log('[chatbot] Iniciando flujo: AGREGAR MEDICAMENTO');
+        
+        // Extraer detalles del medicamento
+        const details = await extractMedicationDetails(message);
+        
+        if (!details) {
+          return res.json({
+            response: "No capté bien los detalles. Por favor, dime el nombre del medicamento y a qué hora debes tomarlo. Ejemplo: 'Paracetamol 500mg cada 8 horas'."
+          });
+        }
 
-        // 3. Validar la respuesta de la IA (extracción)
-        if (
-          !details ||
-          !details.medication?.name ||
-          !details.schedules ||
-          details.schedules.length === 0 ||
-          !details.schedules[0].time
-        ) {
-          // Si la extracción falla, usamos una respuesta genérica
-          return res.json({
-            response:
-              "Entiendo que quieres agregar un medicamento, pero no capté todos los detalles (nombre y al menos una hora).",
-          });
-        }
+        // Validar que los detalles sean completos
+        const validation = validateMedicationDetails(details);
+        if (!validation.valid) {
+          console.warn('[chatbot] Validación fallida:', validation.errors);
+          return res.json({
+            response: `Necesito más información: ${validation.errors.join(', ')}. ¿Podrías ser más específico?`
+          });
+        }
 
-        const { medication: medData, schedules: schedulesData } = details;
+        const { medication: medData, schedules: schedulesData } = details;
 
-        // 4. Crear el Medicamento
-        const newMedication = await prisma.medication.create({
-          data: {
-            patientId,
-            name: medData.name,
-            dosage: medData.dosage,
-            quantity: medData.quantity || 30, // Valor por defecto
-            instructions: medData.instructions,
-            type: medData.type || 'PILL', // Valor por defecto
-          },
-        });
+        // Crear el medicamento
+        const newMedication = await prisma.medication.create({
+          data: {
+            patientId,
+            name: medData.name.trim(),
+            dosage: medData.dosage?.trim(),
+            quantity: medData.quantity || 30,
+            presentation: medData.instructions?.trim(),
+            instructions: medData.instructions?.trim(),
+            type: medData.type || 'PILL',
+          },
+        });
 
-        // 5. Crear los Horarios (convirtiendo a UTC)
-        for (const schedule of schedulesData) {
-          // Usamos la función helper para convertir la hora local de la IA a UTC
-          const utcTimeString = convertLocalTimeToUTCString(schedule.time);
+        console.log(`[chatbot] Medicamento creado: ${newMedication.name} (${newMedication.id})`);
 
-          await prisma.schedule.create({
-            data: {
-              medicationId: newMedication.id,
-              time: utcTimeString, // ¡Guardamos en UTC!
-              frequencyType: schedule.frequencyType || 'DAILY',
-              frequencyValue: schedule.frequencyValue,
-              daysOfWeek: schedule.daysOfWeek,
-              alertType: schedule.alertType || 'NOTIFICATION',
-            },
-         });
-        }
+        // Crear los horarios
+        let createdSchedules = 0;
+        for (const schedule of schedulesData) {
+          const utcTimeString = convertLocalTimeToUTCString(schedule.time);
+          await prisma.schedule.create({
+            data: {
+              medicationId: newMedication.id,
+              time: utcTimeString,
+              frequencyType: schedule.frequencyType || 'DAILY',
+              frequencyValue: schedule.frequencyValue,
+              daysOfWeek: schedule.daysOfWeek,
+              alertType: schedule.alertType || 'NOTIFICATION',
+            },
+          });
+          createdSchedules++;
+        }
 
-        // 6. Enviar respuesta de éxito
-        return res.json({
-          response: `¡Listo! He registrado **${newMedication.name} ${
-            newMedication.dosage || ""
-          }**.`,
-        });
+        console.log(`[chatbot] ${createdSchedules} horario(s) creado(s)`);
 
-      case "CONFIRM_INTAKE": {
-        // ... (Esta lógica sigue pendiente de refactorizar) ...
-        return res.json({
-          response: "Gracias por confirmar. (Función en desarrollo).",
-        });
-      }
-      
-      case "GREETING":
-        // Usamos la función de respuesta conversacional
-        const conversationalResponse = await getConversationalResponse(message);
-        return res.json({ response: conversationalResponse });
-      
-      case "UNKNOWN":
-      default:
-        // 4. Usamos el 'error' de la IA si existe
-        return res.json({
-          response:
-            intentResponse.error || "No estoy seguro de haber entendido. Puedo registrar un medicamento o confirmar una toma.",
-        });
-    }
-  } catch (error) {
-    console.error("Error en el endpoint del chatbot:", error);
-    res
-      .status(500)
-      .json({ error: "Ocurrió un error al procesar tu solicitud." });
-  }
-});
+        // Respuesta amigable
+        const doseInfo = medData.dosage ? ` de ${medData.dosage}` : '';
+        const scheduleInfo = schedulesData.length === 1 
+          ? `a las ${schedulesData[0].time}`
+          : `en ${schedulesData.length} horarios diferentes`;
+        
+        return res.json({
+          response: `✅ ¡Perfecto! He registrado **${newMedication.name}**${doseInfo} ${scheduleInfo}. Recibirás recordatorios puntualmente.`,
+          success: true,
+          medicationId: newMedication.id,
+          schedulesCount: createdSchedules
+        });
+      }
 
-// ================= FIN CHATBOT =================
+      // ===== VER HORARIOS/MEDICAMENTOS =====
+      case "VIEW_SCHEDULE": {
+        console.log('[chatbot] Iniciando flujo: VER HORARIOS');
+        
+        const medications = await prisma.medication.findMany({
+          where: {
+            patientId,
+            active: true,
+            deletedAt: null
+          },
+          include: {
+            schedules: {
+              where: { active: true }
+            }
+          }
+        });
+
+        if (medications.length === 0) {
+          return res.json({
+            response: "No tienes medicamentos registrados. ¿Deseas agregar uno? Cuéntame: nombre, dosis y horario."
+          });
+        }
+
+        // Construir resumen
+        const summary = medications.map(med => 
+          `• **${med.name}**${med.dosage ? ` (${med.dosage})` : ''}: ${med.schedules.length} horario(s) (${med.schedules.map(s => s.time).join(', ')})`
+        ).join('\n');
+
+        return res.json({
+          response: `Tienes ${medications.length} medicamento(s) activo(s):\n\n${summary}`,
+          medications: medications.length,
+          success: true
+        });
+      }
+
+      // ===== CONFIRMAR TOMA =====
+      case "CONFIRM_INTAKE": {
+        console.log('[chatbot] Iniciando flujo: CONFIRMAR TOMA');
+        
+        // Buscar el medicamento mencionado
+        const medicationName = intentResponse.details?.toLowerCase().trim();
+        
+        if (!medicationName) {
+          return res.json({
+            response: "¿Cuál medicamento te tomaste? Cuéntame el nombre y me registro la confirmación."
+          });
+        }
+
+        const medication = await prisma.medication.findFirst({
+          where: {
+            patientId,
+            name: { contains: medicationName, mode: 'insensitive' },
+            active: true,
+            deletedAt: null
+          }
+        });
+
+        if (!medication) {
+          return res.json({
+            response: `No encontré un medicamento con el nombre "${medicationName}". ¿Podrías darme el nombre exacto?`
+          });
+        }
+
+        // Registrar la toma de hoy
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+        await prisma.intakeLog.upsert({
+          where: {
+            medicationId_scheduledFor: {
+              medicationId: medication.id,
+              scheduledFor: today
+            }
+          },
+          update: {
+            action: 'CONFIRMED',
+            actionAt: now
+          },
+          create: {
+            medicationId: medication.id,
+            scheduledFor: today,
+            action: 'CONFIRMED',
+            actionAt: now
+          }
+        });
+
+        console.log(`[chatbot] Toma confirmada: ${medication.name} para paciente ${patientId}`);
+
+        return res.json({
+          response: `✅ Perfecto, he registrado que tomaste **${medication.name}** hoy a las ${now.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}. ¡Excelente!`,
+          success: true,
+          medicationId: medication.id
+        });
+      }
+
+      // ===== SALUDOS =====
+      case "GREETING": {
+        console.log('[chatbot] Respuesta: SALUDO');
+        const conversationalResponse = await getConversationalResponse(message);
+        return res.json({
+          response: conversationalResponse,
+          success: true
+        });
+      }
+
+      // ===== DESPEDIDAS =====
+      case "FAREWELL": {
+        console.log('[chatbot] Respuesta: DESPEDIDA');
+        const goodbyeResponses = [
+          "¡Hasta luego! Recuerda tomar tus medicamentos a tiempo. 💊",
+          "¡Nos vemos! Cuídate mucho. 👋",
+          "¡Adiós! Estaré aquí cuando me necesites. 😊"
+        ];
+        return res.json({
+          response: goodbyeResponses[Math.floor(Math.random() * goodbyeResponses.length)],
+          success: true
+        });
+      }
+
+      // ===== PEDIR AYUDA =====
+      case "HELP": {
+        console.log('[chatbot] Respuesta: AYUDA');
+        return res.json({
+          response: `¡Claro! Puedo ayudarte con:
+• **Agregar medicamentos**: "Quiero agregar paracetamol cada 8 horas"
+• **Ver mis medicamentos**: "¿Qué medicamentos tengo?"
+• **Confirmar que tomé un medicamento**: "Ya me tomé la pastilla"
+¿Qué necesitas?`,
+          success: true
+        });
+      }
+
+      // ===== DESCONOCIDO =====
+      case "UNKNOWN":
+      default: {
+        console.log('[chatbot] Respuesta: NO ENTENDIDO');
+        const fallbackResponse = await getConversationalResponse(message);
+        return res.json({
+          response: fallbackResponse || "Perdón, no estoy seguro de haber entendido. ¿Puedo ayudarte con algo específico sobre tus medicamentos?",
+          success: false
+        });
+      }
+    }
+  } catch (error) {
+    console.error('[chatbot] Error procesando mensaje:', error instanceof Error ? error.message : error);
+    res.status(500).json({ 
+      error: "Ocurrió un error procesando tu solicitud",
+      response: "Disculpa, algo salió mal. Por favor, intenta de nuevo."
+    });
+  }
+});// ================= FIN CHATBOT =================
 
 // ... (cron job) ...
 app.post("/cron/mark-skipped", async (req: Request, res: Response) => {
@@ -1069,4 +1430,37 @@ app.post("/cron/mark-skipped", async (req: Request, res: Response) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`API listening on port ${PORT}`);
+});
+
+// Endpoint to upload a profile image (multipart/form-data)
+app.post('/patients/:id/profile-image', upload.single('profileImage'), async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const file = (req as any).file;
+    if (!file) return res.status(400).json({ error: 'No file uploaded' });
+    
+    // Normalize path (Windows uses backslashes, need forward slashes for URLs)
+    const normalizedPath = file.path.replace(/\\/g, '/');
+    
+    // Store ONLY the relative path, not the full URL
+    // This way, the path works regardless of server address
+    const relativePath = normalizedPath; // e.g., "uploads/1c69d50324f4.jpg"
+    
+    console.log(`[Profile Image Upload] Saving to user ${id}: ${relativePath}`);
+    
+    // Save to user
+    const updated = await prisma.user.update({ 
+      where: { id }, 
+      data: ({ profileImageUrl: relativePath } as any) 
+    });
+    
+    console.log(`[Profile Image Upload] Success. profileImageUrl set to: ${(updated as any).profileImageUrl || 'NULL'}`);
+    
+    const { password: _pw, ...userWithoutPassword } = updated as any;
+    return res.json(userWithoutPassword);
+  } catch (error: any) {
+    console.error('Error uploading profile image:', error);
+    if (error?.code === 'P2025') return res.status(404).json({ error: 'Usuario no encontrado.' });
+    return res.status(500).json({ error: 'No se pudo subir la imagen.' });
+  }
 });

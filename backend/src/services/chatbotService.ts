@@ -5,17 +5,16 @@ import { MedicationType, AlertType } from "@prisma/client";
 dotenv.config();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// URL CORREGIDA: Usando el nombre del modelo exacto que mencionaste.
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${GEMINI_API_KEY}`;
 
 // ====================================================================
-// 1. TIPOS DE INTENCIÓN (Para la primera llamada de clasificación)
+// 1. TIPOS DE INTENCIÓN
 // ====================================================================
 
 export type ChatIntent = 
   | 'ADD_MEDICINE'
   | 'VIEW_SCHEDULE'
-  | 'CONFIRM_INTAKE' // Añadido
+  | 'CONFIRM_INTAKE'
   | 'GREETING'
   | 'FAREWELL'
   | 'HELP'
@@ -23,85 +22,98 @@ export type ChatIntent =
 
 export interface IntentResponse {
   intent: ChatIntent;
-  details: string | null; // El texto crudo (ej: "paracetamol")
+  details: string | null;
+  confidence: 'high' | 'medium' | 'low'; // Confianza en la clasificación
   error?: string;
 }
 
+/**
+ * Prompt mejorado: clasificación de intención con ejemplos claros
+ */
 const classificationPrompt = (userMessage: string): string => {
   return `
-    Tu única tarea es analizar el siguiente mensaje del usuario y clasificar su intención.
-    Debes responder únicamente con un objeto JSON válido.
-    
-    Las intenciones posibles son:
-    - "ADD_MEDICINE": El usuario quiere agregar un nuevo medicamento.
-    - "VIEW_SCHEDULE": El usuario quiere ver sus medicamentos o el horario.
-    - "CONFIRM_INTAKE": El usuario quiere confirmar que se tomó un medicamento (ej: "ya me tomé la pastilla", "confirmar toma").
-    - "GREETING": Un saludo simple.
-    - "FAREWELL": Una despedida.
-    - "HELP": El usuario pide ayuda.
-    - "UNKNOWN": La intención no está clara.
+Eres un asistente especializado en clasificar intenciones de usuario en una app de gestión de medicamentos.
+Tu tarea: Analizar el mensaje y clasificarlo en UNA sola intención.
 
-    Extrae el detalle principal en el campo "details" (ej: el nombre del medicamento, o el saludo).
+INTENCIONES VÁLIDAS:
+1. "ADD_MEDICINE": Agregar medicamento nuevo (ej: "quiero agregar paracetamol", "añade ibuprofeno cada 8 horas")
+2. "VIEW_SCHEDULE": Ver medicamentos o horarios (ej: "qué medicamentos tengo", "cuáles son mis pastillas")
+3. "CONFIRM_INTAKE": Confirmar que se tomó un medicamento (ej: "ya me tomé la pastilla", "confirmar toma de antibiótico")
+4. "GREETING": Saludos simples (ej: "hola", "buenos días", "¿qué tal?")
+5. "FAREWELL": Despedidas (ej: "adiós", "hasta luego", "nos vemos")
+6. "HELP": Pedir ayuda (ej: "¿cómo funciona esto?", "necesito ayuda", "no entiendo")
+7. "UNKNOWN": Ninguna de las anteriores
 
-    Formato de respuesta (solo el JSON):
-    {"intent": "INTENCION_DETECTADA", "details": "Detalle principal o null"}
+INSTRUCCIONES:
+- Sé muy específico: "ADD_MEDICINE" es SOLO si el usuario quiere AGREGAR un medicamento NUEVO.
+- "CONFIRM_INTAKE" es SOLO si confirma tomar un medicamento YA EXISTENTE.
+- Extrae el detalle principal en "details" (nombre del medicamento, saludo, etc.).
+- "confidence": Qué tan seguro estás (high/medium/low).
+- RESPONDE SOLO CON JSON VÁLIDO.
 
-    Mensaje del usuario a analizar:
-    "${userMessage}"
-  `;
+Formato exacto:
+{"intent": "INTENCIÓN", "details": "Detalle o null", "confidence": "high|medium|low"}
+
+Mensaje del usuario:
+"${userMessage}"
+
+Respuesta JSON:`;
 };
 
-/**
- * FUNCIÓN 1: Clasifica la intención general del usuario.
- * Reemplaza al antiguo 'classifyIntent' pero devuelve un objeto.
- */
 export const analyzeChatIntent = async (userMessage: string): Promise<IntentResponse> => {
   if (!GEMINI_API_KEY) {
-    console.error('Error: GEMINI_API_KEY no está configurada.');
-    return { intent: 'UNKNOWN', details: null, error: 'Configuración del servidor incompleta.' };
+    console.error('[chatbotService] Error: GEMINI_API_KEY no configurada');
+    return { 
+      intent: 'UNKNOWN', 
+      details: null, 
+      confidence: 'low',
+      error: 'Configuración del servidor incompleta.' 
+    };
   }
 
   const requestBody = {
     contents: [{ parts: [{ text: classificationPrompt(userMessage) }] }],
     generationConfig: {
-      temperature: 0.1,
+      temperature: 0.2, // Más bajo para clasificación consistente
       responseMimeType: "application/json",
+      maxOutputTokens: 100, // Limitar tokens para respuesta rápida
     }
   };
 
   try {
-    // Log para verificar la URL y el cuerpo (opcional)
-    // console.log(`[chatbotService] Enviando a URL: ${GEMINI_API_URL}`);
+    console.log(`[chatbotService.analyzeChatIntent] Clasificando: "${userMessage}"`);
+    const response = await axios.post(GEMINI_API_URL, requestBody, { timeout: 10000 });
     
-    const response = await axios.post(GEMINI_API_URL, requestBody);
-    const rawResponse = response.data.candidates[0].content.parts[0].text;
-    console.log(`[chatbotService.analyzeChatIntent] Respuesta cruda: ${rawResponse}`);
-    const parsedJson: IntentResponse = JSON.parse(rawResponse);
-    return parsedJson;
+    if (!response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+      throw new Error('Respuesta inesperada de API');
+    }
 
-  } catch (error) {
-    // Error detallado
-    console.error(`[chatbotService.analyzeChatIntent] Error en API:`);
-    if (axios.isAxiosError(error)) {
-      console.error(JSON.stringify(error.response?.data, null, 2));
-    } else {
-      console.error(error);
+    const rawResponse = response.data.candidates[0].content.parts[0].text;
+    console.log(`[chatbotService.analyzeChatIntent] Respuesta: ${rawResponse}`);
+    
+    const parsedJson: IntentResponse = JSON.parse(rawResponse);
+    
+    // Validación de campos
+    if (!parsedJson.intent || !Object.values(['ADD_MEDICINE', 'VIEW_SCHEDULE', 'CONFIRM_INTAKE', 'GREETING', 'FAREWELL', 'HELP', 'UNKNOWN']).includes(parsedJson.intent)) {
+      parsedJson.intent = 'UNKNOWN';
     }
     
+    return parsedJson;
+  } catch (error) {
+    console.error(`[chatbotService.analyzeChatIntent] Error:`, error instanceof Error ? error.message : error);
     return { 
       intent: 'UNKNOWN', 
       details: null, 
-      error: 'No se pudo procesar la solicitud con la IA.' 
+      confidence: 'low',
+      error: 'Error procesando la solicitud.' 
     };
   }
 };
 
-
 // ====================================================================
-// 2. TIPOS DE EXTRACCIÓN (Para la segunda llamada de detalles)
+// 2. EXTRACCIÓN DE DETALLES DE MEDICAMENTO
 // ====================================================================
 
-// Este es el tipo que 'index.ts' espera
 export interface MedicationDetails {
   medication: {
     name: string;
@@ -114,113 +126,234 @@ export interface MedicationDetails {
     time: string; // "HH:MM"
     frequencyType?: 'DAILY' | 'HOURLY' | 'WEEKLY';
     frequencyValue?: number;
-    daysOfWeek?: string; // "0,1,5"
+    daysOfWeek?: string;
     alertType?: AlertType;
   }[];
 }
 
+/**
+ * Prompt mejorado: extracción de medicamentos con validaciones
+ */
 const extractionPrompt = (userMessage: string): string => {
   return `
-    Tu tarea es analizar el siguiente mensaje del usuario, que quiere agregar un medicamento, y extraer los detalles en un formato JSON específico.
-    Debes responder únicamente con el objeto JSON. No incluyas "json" o "".
+Eres un asistente médico especializado en extraer información de medicamentos de forma segura.
 
-    Reglas:
-    1.  'name' (medicamento) y 'time' (horario) son obligatorios.
-    2.  Si no se menciona la dosis (dosage), instrucciones, etc., omite el campo (no uses 'null' o 'undefined').
-    3.  El 'time' debe estar en formato "HH:MM". (ej: 8am -> "08:00", 10pm -> "22:00").
-    4.  'frequencyType' por defecto es "DAILY" si solo se da una hora.
-    5.  'type' (MedicationType) debe ser 'PILL', 'SYRUP', 'INJECTION', o 'OTHER'. Por defecto 'PILL'.
-    6.  'quantity' por defecto es 30.
-    7.  'daysOfWeek' solo aplica si frequencyType es "WEEKLY". (Domingo=0, Lunes=1...).
+TAREA: Analizar el mensaje del usuario y extraer los detalles del medicamento en formato JSON.
 
-    Formato de respuesta (solo el JSON):
+REGLAS CRÍTICAS:
+1. El nombre del medicamento (medication.name) es OBLIGATORIO.
+2. El horario (time) es OBLIGATORIO en formato "HH:MM" (24h: 08:00 = 8am, 22:00 = 10pm).
+3. Si no se menciona algo, OMITE el campo (no uses null).
+4. frequencyType: DAILY (defecto), HOURLY (ej: "cada 4 horas"), o WEEKLY.
+5. frequencyValue: Para HOURLY, cuántas horas (ej: 4, 6, 8). Para WEEKLY, ignorar.
+6. type: PILL (defecto), SYRUP, INJECTION, o INHALER.
+7. quantity: Cantidad de dosis en la caja (defecto 30).
+8. daysOfWeek: Solo si es WEEKLY (domingo=0, lunes=1, ..., sábado=6).
+9. alertType: NOTIFICATION (defecto) o ALARM.
+10. instructions: Instrucciones especiales (ej: "tomar con agua", "en ayunas").
+
+EJEMPLOS:
+- "Paracetamol 500mg cada 8 horas" → time: 08:00, frequencyType: HOURLY, frequencyValue: 8
+- "Antibiótico a las 9 de la mañana todos los días" → time: 09:00, frequencyType: DAILY
+- "Vitamina los lunes y viernes a las 7" → time: 07:00, frequencyType: WEEKLY, daysOfWeek: "1,5"
+
+RESPONDE SOLO CON JSON VÁLIDO (sin explicaciones):
+{
+  "medication": {
+    "name": "NombreMedicamento",
+    "dosage": "500mg",
+    "quantity": 30,
+    "type": "PILL"
+  },
+  "schedules": [
     {
-      "medication": {
-        "name": "NombreMedicamento",
-        "dosage": "500mg" 
-      },
-      "schedules": [
-        { "time": "08:00", "frequencyType": "DAILY" },
-        { "time": "20:00", "frequencyType": "DAILY" }
-      ]
+      "time": "08:00",
+      "frequencyType": "DAILY",
+      "alertType": "NOTIFICATION"
     }
+  ]
+}
 
-    Mensaje del usuario a analizar:
-    "${userMessage}"
-  `;
+Mensaje del usuario:
+"${userMessage}"
+
+JSON:`;
 };
 
-/**
- * FUNCIÓN 2: Extrae los detalles estructurados de un medicamento.
- * (Esta es la función que faltaba)
- */
 export const extractMedicationDetails = async (userMessage: string): Promise<MedicationDetails | null> => {
-  if (!GEMINI_API_KEY) return null;
+  if (!GEMINI_API_KEY) {
+    console.error('[chatbotService] GEMINI_API_KEY no configurada');
+    return null;
+  }
 
   const requestBody = {
     contents: [{ parts: [{ text: extractionPrompt(userMessage) }] }],
     generationConfig: {
-      temperature: 0.1,
+      temperature: 0.15, // Más consistente para extracción
       responseMimeType: "application/json",
+      maxOutputTokens: 500,
     }
   };
 
   try {
-    const response = await axios.post(GEMINI_API_URL, requestBody);
+    console.log(`[chatbotService.extractMedicationDetails] Extrayendo de: "${userMessage}"`);
+    const response = await axios.post(GEMINI_API_URL, requestBody, { timeout: 10000 });
+    
+    if (!response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+      throw new Error('Respuesta inesperada de API');
+    }
+
     const rawResponse = response.data.candidates[0].content.parts[0].text;
-    console.log(`[chatbotService.extractMedicationDetails] Respuesta cruda: ${rawResponse}`);
     const parsedJson: MedicationDetails = JSON.parse(rawResponse);
+    
+    // Validación de campos requeridos
+    if (!parsedJson.medication?.name) {
+      console.warn('[chatbotService] Falta nombre del medicamento');
+      return null;
+    }
+    
+    if (!parsedJson.schedules?.length) {
+      console.warn('[chatbotService] Falta información de horario');
+      return null;
+    }
+    
+    console.log('[chatbotService.extractMedicationDetails] Éxito:', parsedJson.medication.name);
     return parsedJson;
   } catch (error) {
-    console.error(`[chatbotService.extractMedicationDetails] Error en API:`);
-    if (axios.isAxiosError(error)) {
-      console.error(JSON.stringify(error.response?.data, null, 2));
-    } else {
-      console.error(error);
-    }
+    console.error('[chatbotService.extractMedicationDetails] Error:', error instanceof Error ? error.message : error);
     return null;
   }
 };
 
-
 // ====================================================================
-// 3. RESPUESTA CONVERSACIONAL (Para saludos, etc.)
+// 3. RESPUESTAS CONVERSACIONALES
 // ====================================================================
-
-const conversationalPrompt = (userMessage: string): string => {
-  return `
-    Eres "Asistente Pasti". Responde al siguiente saludo o comentario casual del usuario de forma amigable y breve (máx 15 palabras).
-    
-    Usuario: "${userMessage}"
-    Asistente:
-  `;
-};
 
 /**
- * FUNCIÓN 3: Genera una respuesta casual.
- * (Esta es la otra función que faltaba)
+ * Prompt mejorado: respuestas contextuales y amigables
  */
+const conversationalPrompt = (userMessage: string): string => {
+  return `
+Eres "Pasti", un asistente amigable y profesional para gestión de medicamentos.
+
+TONO: Cordial, empático, profesional pero accesible. Máx 20 palabras.
+
+CONTEXTO: Estás en una app para recordar y gestionar medicamentos. El usuario puede:
+- Saludarte
+- Despedirse
+- Pedir ayuda general
+- Comentar sobre su salud
+
+INSTRUCCIONES:
+- Sé breve y directo.
+- Si es un saludo, responde con calidez.
+- Si pide ayuda, ofrece opciones claras (agregar medicamento, ver horarios, confirmar toma).
+- NO des consejos médicos; remite al médico si es necesario.
+- Responde en español, el mismo idioma del usuario.
+
+Mensaje del usuario:
+"${userMessage}"
+
+Respuesta (solo texto, sin comillas):`;
+};
+
 export const getConversationalResponse = async (userMessage: string): Promise<string> => {
-  if (!GEMINI_API_KEY) return "Hola.";
+  if (!GEMINI_API_KEY) {
+    return "Hola, soy Pasti. ¿Cómo puedo ayudarte?";
+  }
 
   const requestBody = {
     contents: [{ parts: [{ text: conversationalPrompt(userMessage) }] }],
     generationConfig: {
-      temperature: 0.7,
+      temperature: 0.7, // Más variabilidad para conversación natural
+      maxOutputTokens: 100,
     }
   };
 
   try {
-    const response = await axios.post(GEMINI_API_URL, requestBody);
-    const rawResponse = response.data.candidates[0].content.parts[0].text;
-    return rawResponse.trim();
-  } catch (error) {
-    console.error(`[chatbotService.getConversationalResponse] Error en API:`);
-    if (axios.isAxiosError(error)) {
-      console.error(JSON.stringify(error.response?.data, null, 2));
-    } else {
-      console.error(error);
+    console.log(`[chatbotService.getConversationalResponse] Generando respuesta para: "${userMessage}"`);
+    const response = await axios.post(GEMINI_API_URL, requestBody, { timeout: 10000 });
+    
+    if (!response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+      throw new Error('Respuesta inesperada');
     }
-    return "No pude procesar eso, pero ¡hola!";
+
+    const rawResponse = response.data.candidates[0].content.parts[0].text.trim();
+    console.log(`[chatbotService.getConversationalResponse] Respuesta generada`);
+    return rawResponse;
+  } catch (error) {
+    console.error('[chatbotService.getConversationalResponse] Error:', error instanceof Error ? error.message : error);
+    return "Perdón, no pude entender eso. ¿Necesitas ayuda? Puedo: agregar medicamentos, ver tu horario o confirmar una toma.";
   }
+};
+
+// ====================================================================
+// 4. FUNCIONES AUXILIARES
+// ====================================================================
+
+/**
+ * Convierte una hora en texto (ej: "8 de la mañana") a formato 24h (08:00)
+ */
+export const parseTimeToHHMM = (timeText: string): string | null => {
+  const lowerText = timeText.toLowerCase();
+  
+  // Buscar patrones como "8 de la mañana", "8am", "20:00", etc.
+  const ampmMatch = lowerText.match(/(\d{1,2})\s*(?:de la)?\s*(?:mañana|am|a\.m\.)/);
+  if (ampmMatch) {
+    const hour = parseInt(ampmMatch[1]);
+    if (hour < 1 || hour > 12) return null;
+    return `${String(hour).padStart(2, '0')}:00`;
+  }
+  
+  const pmMatch = lowerText.match(/(\d{1,2})\s*(?:de la)?\s*(?:tarde|noche|pm|p\.m\.)/);
+  if (pmMatch) {
+    const hour = parseInt(pmMatch[1]);
+    if (hour < 1 || hour > 12) return null;
+    const convertedHour = hour === 12 ? 12 : hour + 12;
+    return `${String(convertedHour).padStart(2, '0')}:00`;
+  }
+  
+  // Patrón 24h directo "09:00" o "9:00"
+  const directMatch = timeText.match(/(\d{1,2}):(\d{2})/);
+  if (directMatch) {
+    const hour = parseInt(directMatch[1]);
+    const minute = parseInt(directMatch[2]);
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+  
+  return null;
+};
+
+/**
+ * Valida un objeto MedicationDetails antes de guardarlo
+ */
+export const validateMedicationDetails = (details: MedicationDetails): { valid: boolean; errors: string[] } => {
+  const errors: string[] = [];
+
+  if (!details.medication?.name?.trim()) {
+    errors.push('Falta el nombre del medicamento');
+  }
+
+  if (!details.schedules?.length) {
+    errors.push('Falta al menos un horario');
+  } else {
+    details.schedules.forEach((sch, idx) => {
+      if (!sch.time || !sch.time.match(/^\d{2}:\d{2}$/)) {
+        errors.push(`Horario ${idx + 1} inválido (debe ser HH:MM)`);
+      }
+      if (sch.frequencyType && !['DAILY', 'HOURLY', 'WEEKLY'].includes(sch.frequencyType)) {
+        errors.push(`Frecuencia ${idx + 1} inválida`);
+      }
+    });
+  }
+
+  if (details.medication?.type && !['PILL', 'SYRUP', 'INJECTION', 'INHALER'].includes(details.medication.type)) {
+    errors.push('Tipo de medicamento inválido');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors
+  };
 };

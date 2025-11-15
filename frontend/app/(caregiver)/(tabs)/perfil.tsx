@@ -26,6 +26,7 @@ import { useAuth } from '../../../context/AuthContext';
 import { usePatient } from '../../../context/PatientContext';
 import * as apiService from '../../../services/apiService';
 import * as ImagePicker from 'expo-image-picker'; 
+import { API_URL } from '../../../constants/Config'; 
 
 // El tipo de perfil es el mismo que el del paciente
 type UserProfileState = {
@@ -82,7 +83,21 @@ export default function CaregiverProfileScreen() {
             };
             setPerfil(adaptedProfile);
             setPerfilTemporal(adaptedProfile);
-            // setImageUri(perfilData.profileImageUrl || null);
+            
+            let imageUrl = perfilData.profileImageUrl || null;
+            console.log('[Profile Load] profileImageUrl from server:', imageUrl);
+            
+            // Convert relative path to absolute URL
+            // If it's already a full URL, use as-is; if relative, prepend API_URL
+            if (imageUrl) {
+              if (!imageUrl.startsWith('http')) {
+                // Relative path: prepend API_URL
+                imageUrl = `${API_URL}/${imageUrl}`;
+                console.log('[Profile Load] Converted relative path to absolute URL:', imageUrl);
+              }
+            }
+            
+            setImageUri(imageUrl);
           }
         } catch (error) {
           console.error("Error al cargar el perfil:", error);
@@ -136,9 +151,144 @@ export default function CaregiverProfileScreen() {
     );
   };
 
-  // --- Lógica de Edición (copiada del perfil del paciente) ---
+  // --- Lógica de Edición (implementada completa) ---
   const guardarPerfil = async () => {
-    Alert.alert("Función no conectada", "La edición de perfil se conectará en un próximo paso.");
+    if (!perfilTemporal) return;
+    const profileIdToSave = user?.id;
+    if (!profileIdToSave) {
+      Alert.alert('Error', 'No se pudo identificar el perfil a guardar.');
+      return;
+    }
+
+    // Validaciones básicas
+    if (!perfilTemporal.nombre || !perfilTemporal.apellido) {
+      Alert.alert('Faltan datos', 'Por favor completa nombre y apellido.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // If there's a new local image selected, upload it first
+      let uploadedProfileImageUrl: string | undefined = undefined;
+      if (imageUri && !imageUri.startsWith('http')) {
+        try {
+          const form = new FormData();
+          // @ts-ignore - React Native FormData file
+          form.append('profileImage', { uri: imageUri, name: 'profile.jpg', type: 'image/jpeg' });
+
+          const uploadResp = await fetch(`${API_URL}/patients/${profileIdToSave}/profile-image`, {
+            method: 'POST',
+            // Let fetch/set browser handle Content-Type including boundary
+            body: form as any,
+          });
+
+          if (!uploadResp.ok) {
+            const txt = await uploadResp.text().catch(() => '');
+            console.warn('Upload failed:', uploadResp.status, txt);
+            // Don't throw - just log and continue without image
+            console.warn('Continuaremos sin guardar la imagen, pero el perfil se actualizará.');
+          } else {
+            const uploadedUser = await uploadResp.json();
+            console.log('[Profile Image] Uploaded. Response:', uploadedUser);
+            uploadedProfileImageUrl = uploadedUser.profileImageUrl || undefined;
+            console.log('[Profile Image] profileImageUrl from response:', uploadedProfileImageUrl);
+            
+            // Convert relative path to absolute URL for display
+            if (uploadedProfileImageUrl && !uploadedProfileImageUrl.startsWith('http')) {
+              uploadedProfileImageUrl = `${API_URL}/${uploadedProfileImageUrl}`;
+              console.log('[Profile Image] Converted to absolute URL:', uploadedProfileImageUrl);
+            }
+            
+            // update local imageUri to the returned public URL
+            if (uploadedProfileImageUrl) setImageUri(uploadedProfileImageUrl);
+          }
+        } catch (err) {
+          console.error('Error uploading image:', err);
+          console.warn('La foto no se pudo subir, pero continuaremos guardando el perfil sin cambios de imagen.');
+          // Don't throw - just log and continue
+        }
+      }
+
+      // Convertir fecha DD/MM/AAAA a ISO (si se ingresó)
+      const parseDateString = (dateStr: string): Date | null => {
+        if (!dateStr || dateStr.length !== 10) return null;
+        const parts = dateStr.split('/');
+        if (parts.length !== 3) return null;
+        const [day, month, year] = parts.map(Number);
+        if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+        const date = new Date(year, month - 1, day);
+        if (date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day) return date;
+        return null;
+      };
+
+      const birthDateIso = perfilTemporal.fechaNacimiento
+        ? ((): string | undefined => {
+            const parsed = parseDateString(perfilTemporal.fechaNacimiento as string);
+            return parsed ? parsed.toISOString() : undefined;
+          })()
+        : undefined;
+
+      const payload: Partial<apiService.UserProfile> = {
+        firstName: perfilTemporal.nombre || undefined,
+        lastName: perfilTemporal.apellido || undefined,
+        email: perfilTemporal.email || undefined,
+        phone: perfilTemporal.telefono || undefined,
+        birthDate: birthDateIso || undefined,
+        address: perfilTemporal.direccion || undefined,
+        emergencyContact: perfilTemporal.contactoEmergencia || undefined,
+        emergencyPhone: perfilTemporal.telefonoEmergencia || undefined,
+        medicalConditions: perfilTemporal.condicionesMedicas || undefined,
+        allergies: perfilTemporal.alergias || undefined,
+        profileImageUrl: uploadedProfileImageUrl || undefined,
+      };
+
+      const updated = await apiService.updateUserProfile(profileIdToSave!, payload);
+      
+      // Helper function to format ISO date to DD/MM/AAAA
+      const formatISODateToDMY = (isoString: string | null | undefined): string => {
+        if (!isoString) return '';
+        try {
+          const date = new Date(isoString);
+          if (isNaN(date.getTime())) return '';
+          const day = date.getDate().toString().padStart(2, '0');
+          const month = (date.getMonth() + 1).toString().padStart(2, '0');
+          const year = date.getFullYear();
+          return `${day}/${month}/${year}`;
+        } catch (error) {
+          console.error("Error al formatear la fecha ISO:", isoString, error);
+          return '';
+        }
+      };
+
+      // Convertir fecha ISO a DD/MM/AAAA para mostrar
+      const adapted: UserProfileState = {
+        nombre: updated.firstName || '',
+        apellido: updated.lastName || '',
+        email: updated.email || null,
+        telefono: updated.phone || null,
+        fechaNacimiento: formatISODateToDMY(updated.birthDate || null),
+        direccion: updated.address || null,
+        contactoEmergencia: updated.emergencyContact || null,
+        telefonoEmergencia: updated.emergencyPhone || null,
+        condicionesMedicas: updated.medicalConditions || null,
+        alergias: updated.allergies || null,
+      };
+
+      setPerfil(adapted);
+      setPerfilTemporal(adapted);
+      setEditando(false);
+
+      // Actualizar contexto
+      setUser && setUser(updated);
+
+      Alert.alert('¡Listo!', 'Tu perfil se ha actualizado correctamente.');
+    } catch (error: any) {
+      console.error('Error guardando perfil:', error);
+      const msg = error?.message || 'Ocurrió un problema al actualizar el perfil. Intenta de nuevo más tarde.';
+      Alert.alert('No se pudo guardar', msg);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const cancelarEdicion = () => {
@@ -207,13 +357,15 @@ export default function CaregiverProfileScreen() {
               <User size={48} color="#6B7280" strokeWidth={2} />
             )}
           </View>
-          {/* El cuidador SÍ puede editar su foto */}
-          <TouchableOpacity 
-            style={styles.cameraButton} 
-            onPress={handleChoosePhoto}
-          >
-            <Camera size={20} color="#FFFFFF" strokeWidth={2} />
-          </TouchableOpacity>
+          {/* El cuidador SÍ puede editar su foto solo cuando está editando */}
+          {editando && (
+            <TouchableOpacity 
+              style={styles.cameraButton} 
+              onPress={handleChoosePhoto}
+            >
+              <Camera size={20} color="#FFFFFF" strokeWidth={2} />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* --- Formulario de Perfil (campos relevantes) --- */}

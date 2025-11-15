@@ -27,7 +27,11 @@ export default function HistorialPacienteScreen() {
     useCallback(() => {
       const cargarHistorial = async () => {
         if (!patientId) {
-            Alert.alert("Error", "No se recibió el ID del paciente.", [{ text: "OK", onPress: () => router.back() }]);
+            Alert.alert(
+              "Paciente no especificado",
+              "No se recibió el ID del paciente. Serás llevado a la pantalla anterior.",
+              [{ text: "OK", onPress: () => router.back() }]
+            );
             return;
         };
         setIsLoading(true);
@@ -47,7 +51,10 @@ export default function HistorialPacienteScreen() {
           setHistorial(formattedLogs);
         } catch (e) {
           console.error(e);
-          Alert.alert("Error", "No se pudo cargar el historial del paciente.");
+          Alert.alert(
+            "No pudimos cargar el historial",
+            "Hubo un problema al obtener el historial del paciente. Revisa tu conexión e inténtalo de nuevo."
+          );
         } finally {
           setIsLoading(false);
         }

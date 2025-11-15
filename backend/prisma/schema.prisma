@@ -33,6 +33,7 @@ model User {
   // --- ¡CORREGIDO AQUÍ! ---
   // Cambiado de String? a DateTime? con zona horaria
   birthDate         DateTime? @db.Timestamptz
+  profileImageUrl   String?
 
   address           String?
   emergencyContact  String?

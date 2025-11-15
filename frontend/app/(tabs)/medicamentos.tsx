@@ -68,9 +68,9 @@ const MedicationItem = React.memo(({ item, onDelete }: { item: MedicationListIte
           </View>
         </View>
         <View style={styles.actionButtons}>
-            <Link href={{ pathname: "/edit-medication", params: { medId: item.id } }} asChild>
-                <TouchableOpacity style={styles.editButton}><Pencil size={20} color="#3B82F6" /></TouchableOpacity>
-            </Link>
+      <Link href={`/edit-medication?medId=${item.id}`} asChild>
+        <TouchableOpacity style={styles.editButton}><Pencil size={20} color="#3B82F6" /></TouchableOpacity>
+      </Link>
             <TouchableOpacity style={styles.deleteButton} onPress={onDelete}><Trash2 size={20} color="#EF4444" /></TouchableOpacity>
         </View>
       </View>

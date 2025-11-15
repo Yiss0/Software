@@ -26,7 +26,10 @@ const SyncScreen = () => {
   const handleSync = async () => {
     // Verificación para asegurar que la base de datos esté lista.
     if (!db) {
-      Alert.alert('Error', 'La base de datos local no está lista. Intenta de nuevo.');
+      Alert.alert(
+        'Base de datos no lista',
+        'La base de datos local aún no está lista. Espera unos segundos e inténtalo de nuevo.'
+      );
       return;
     }
 

@@ -21,6 +21,7 @@ export interface Medication {
   dosage?: string;
   quantity?: number;
   instructions?: string;
+  type?: 'PILL' | 'SYRUP' | 'INHALER';
 }
 export type MedicationWithSchedules = Medication & { schedules: Schedule[] };
 export type AlertType = 'NOTIFICATION' | 'ALARM';
@@ -64,6 +65,7 @@ export interface UserProfile {
   emergencyPhone: string | null;
   medicalConditions: string | null;
   allergies: string | null;
+  profileImageUrl?: string | null;
 }
 export interface UserRegistrationPayload {
   firstName: string;
@@ -97,6 +99,18 @@ export interface PatientDashboard {
   todaysIntakes: IntakeLogWithMedication[];
 }
 
+export type UpdateMedicationPayload = {
+  medication: {
+    name: string;
+    dosage?: string | null;
+    quantity?: number | null;
+    presentation?: string | null;
+    instructions?: string | null;
+    color?: string | null;
+    type?: string;
+  };
+  schedules: NewSchedulePayload[]; 
+};
 
 // --- FUNCIONES DEL SERVICIO ---
 // ... (fetchMedicationsByPatient, fetchSchedulesForMedication, addMedication, deleteMedication se mantienen igual) ...
@@ -251,6 +265,63 @@ export const fetchUserProfile = async (userId: string): Promise<UserProfile | nu
     throw error;
   }
 };
+/**
+ * Actualiza el perfil de un usuario/paciente.
+ * Retorna el perfil actualizado.
+ */
+export const updateUserProfile = async (userId: string, payload: Partial<UserProfile>): Promise<UserProfile> => {
+  if (!userId) throw new Error('El ID del usuario es requerido.');
+  const candidatePaths = [
+    `/patients/${userId}`,
+    `/patients/${userId}/profile`,
+    `/patients/profile/${userId}`,
+    `/users/${userId}`,
+    `/users/${userId}/profile`,
+    `/profiles/${userId}`,
+  ];
+
+  let lastErr: any = null;
+  for (const path of candidatePaths) {
+    const url = `${API_URL}${path}`;
+    // Try PUT then PATCH for each candidate URL
+    for (const method of ['PUT', 'PATCH']) {
+      try {
+  console.warn(`[apiService] intentando ${method} ${url}`);
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          return await res.json();
+        }
+
+        // If 404, continue trying other methods/endpoints
+        const text = await res.text().catch(() => '');
+        let parsedMsg: any = null;
+        try {
+          parsedMsg = JSON.parse(text || '{}');
+        } catch (e) {
+          // ignore
+        }
+        const errMsg = parsedMsg?.error || parsedMsg?.message || `Error del servidor: ${res.status}`;
+        console.warn(`[apiService] ${method} ${url} devolvió ${res.status}: ${errMsg}`);
+        lastErr = new Error(errMsg);
+        // continue to next method/endpoint
+      } catch (err) {
+        console.error(`[apiService] fallo al llamar ${method} ${url}:`, err);
+        lastErr = err;
+      }
+    }
+  }
+
+  // Si llegamos aquí, todas las opciones fallaron
+  const finalErr = lastErr || new Error('No se pudo actualizar el perfil.');
+  console.error(`[apiService] updateUserProfile falló para ${userId}:`, finalErr);
+  throw finalErr;
+};
+
 export const registerUser = async (payload: UserRegistrationPayload): Promise<UserProfile> => {
   const requestUrl = `${API_URL}/users/register`; 
   try {
@@ -288,6 +359,51 @@ export const loginUser = async (email: string, password: string): Promise<UserPr
     console.error('Error en loginUser:', error);
     throw error;
   }
+};
+
+export const fetchMedicationById = async (medId: string): Promise<MedicationWithSchedules | null> => {
+  if (!medId) return null;
+  const requestUrl = `${API_URL}/medications/${medId}`;
+  
+  try {
+    const response = await fetch(requestUrl); // Usando fetch
+    
+    if (!response.ok) {
+       if (response.status === 404) return null; 
+       throw new Error(`Error del servidor: ${response.status}`);
+    }
+    
+    return await response.json(); // Usando response.json()
+  } catch (error) {
+    console.error(`[apiService] Error fetching medication by ID ${medId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * 2. ACTUALIZAR UN MEDICAMENTO (PUT) (CORREGIDO)
+ */
+export const updateMedication = async (medId: string, payload: UpdateMedicationPayload): Promise<Medication> => {
+  if (!medId) throw new Error("El ID del medicamento es requerido para actualizar.");
+  const requestUrl = `${API_URL}/medications/${medId}`;
+  
+  try {
+    const response = await fetch(requestUrl, { // Usando fetch
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+       const errorData = await response.json();
+       throw new Error(errorData.error || `Error del servidor al actualizar: ${response.status}`);
+    }
+
+    return await response.json(); // Usando response.json()
+  } catch (error) {
+    console.error(`[apiService] Error updating medication ${medId}:`, error);
+    throw error;
+  }
 };
 // ... (Funciones de Caregiver se mantienen igual) ...
 export const fetchPatientsForCaregiver = async (caregiverId: string): Promise<PatientForCaregiver[]> => {
