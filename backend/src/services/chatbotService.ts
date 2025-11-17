@@ -234,7 +234,7 @@ export const extractMedicationDetails = async (userMessage: string): Promise<Med
  */
 const conversationalPrompt = (userMessage: string): string => {
   return `
-Eres "Pasti", un asistente amigable y profesional para gestión de medicamentos.
+Eres "Pastillin", un asistente amigable y profesional para gestión de medicamentos.
 
 TONO: Cordial, empático, profesional pero accesible. Máx 20 palabras.
 
