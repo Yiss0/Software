@@ -47,19 +47,38 @@ export default function FamiliaresScreen() {
   );
 
   const handleLinkCaregiver = async () => {
-    if (!caregiverEmail.trim() || !user?.id) {
-        Alert.alert('Error', 'Por favor, ingresa un email válido.');
-        return;
+    const email = caregiverEmail.trim();
+    if (!email || !user?.id) {
+      Alert.alert('Email requerido', 'Por favor, ingresa el email del cuidador.');
+      return;
+    }
+    // Validación básica de formato de email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      Alert.alert('Email inválido', 'Por favor ingresa un correo electrónico válido.');
+      return;
     }
     setIsLinking(true);
     try {
-        const newLink = await apiService.linkCaregiverByEmail(user.id, caregiverEmail);
+        const newLink = await apiService.linkCaregiverByEmail(user.id, email);
         setCaregivers(prev => [...prev, newLink]);
-        Alert.alert('Éxito', 'Cuidador vinculado correctamente.');
+        Alert.alert('Éxito', `¡Perfecto! ${newLink.caregiver.firstName} ha sido vinculado como tu cuidador.`);
         setIsModalVisible(false);
         setCaregiverEmail('');
     } catch (error: any) {
-        Alert.alert('Error al vincular', error.message);
+      console.error('[familiares] linkCaregiver error object:', error);
+      let mensajeError = 'No se pudo vincular el cuidador. Intenta de nuevo.';
+        
+        // Mapeo de errores técnicos a mensajes amigables
+        if (error.message.includes('No se encontró')) {
+            mensajeError = 'No existe un cuidador con ese email. Verifica que el email sea correcto.';
+        } else if (error.message.includes('vinculado')) {
+            mensajeError = 'Ya estás vinculado a este cuidador.';
+        } else if (error.message.includes('Email')) {
+            mensajeError = 'El email no es válido.';
+        }
+        
+        Alert.alert('No se pudo vincular', mensajeError);
     } finally {
         setIsLinking(false);
     }
@@ -146,8 +165,8 @@ export default function FamiliaresScreen() {
                 <TouchableOpacity style={styles.closeButton} onPress={() => setIsModalVisible(false)}>
                     <X size={24} color="#6B7280" />
                 </TouchableOpacity>
-                <Text style={styles.modalTitle}>Añadir Cuidador</Text>
-                <Text style={styles.modalSubtitle}>Ingresa el email de la persona que quieres que sea tu cuidador. Esa persona ya debe tener una cuenta en PastillApp.</Text>
+                <Text style={styles.modalTitle}>Vincular Cuidador</Text>
+                <Text style={styles.modalSubtitle}>Ingresa el email del cuidador que deseas vincular. Esa persona ya debe tener una cuenta en PastillApp como cuidador.</Text>
                 <TextInput
                     style={styles.input}
                     placeholder="email@ejemplo.com"
@@ -157,7 +176,7 @@ export default function FamiliaresScreen() {
                     autoCapitalize="none"
                 />
                 <TouchableOpacity style={[styles.modalActionButton, isLinking && styles.buttonDisabled]} onPress={handleLinkCaregiver} disabled={isLinking}>
-                    {isLinking ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.modalActionButtonText}>Vincular Cuidador</Text>}
+                    {isLinking ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.modalActionButtonText}>Vincular</Text>}
                 </TouchableOpacity>
             </View>
         </View>

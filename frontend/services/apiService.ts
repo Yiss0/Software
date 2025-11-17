@@ -455,11 +455,17 @@ export const linkPatientToCaregiverByEmail = async (caregiverId: string, patient
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ patientEmail })
     });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error);
-    }
-    return response.json();
+  if (!response.ok) {
+    // Try to parse JSON, otherwise fall back to text
+    try {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Error del servidor: ${response.status}`);
+    } catch (e) {
+      const text = await response.text();
+      throw new Error(text || `Error del servidor: ${response.status}`);
+    }
+  }
+  return response.json();
 };
 export const unlinkPatientFromCaregiver = async (caregiverId: string, patientId: string): Promise<boolean> => {
     const requestUrl = `${API_URL}/caregivers/${caregiverId}/patients/${patientId}`;
@@ -478,11 +484,16 @@ export const linkCaregiverByEmail = async (patientId: string, caregiverEmail: st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ caregiverEmail }),
   });
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.error || 'No se pudo vincular al cuidador.');
-  }
-  return await response.json();
+  if (!response.ok) {
+    try {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Error del servidor: ${response.status}`);
+    } catch (e) {
+      const text = await response.text();
+      throw new Error(text || `Error del servidor: ${response.status}`);
+    }
+  }
+  return await response.json();
 };
 export const fetchPatientDashboard = async (
   caregiverId: string,

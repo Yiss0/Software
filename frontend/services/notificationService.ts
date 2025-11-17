@@ -55,6 +55,7 @@ export async function scheduleNextDoseNotification(nextDose: apiService.NextDose
 
   if (triggerDate > now) {
     const secondsUntilTrigger = (triggerDate.getTime() - now.getTime()) / 1000;
+    console.log(`[NotificationService] nextDose: med=${nextDose.medication.id} schedule=${nextDose.schedule.id} trigger=${triggerDate.toISOString()} secondsUntil=${secondsUntilTrigger}`);
 
     let notificationContent: Notifications.NotificationContentInput;
 
@@ -77,14 +78,13 @@ export async function scheduleNextDoseNotification(nextDose: apiService.NextDose
       };
     }
 
-    // --- ¡NUEVA LÓGICA AÑADIDA! ---
     try {
       // 1. Programa la notificación local
       await Notifications.scheduleNotificationAsync({
         content: notificationContent,
         trigger: { seconds: secondsUntilTrigger },
       });
-      
+
       console.log(`[NotificationService] Notificación (${alertType}) programada para ${triggerDate.toLocaleString('es-CL')}.`);
 
       // 2. Llama al backend para crear el registro PENDING
@@ -100,7 +100,6 @@ export async function scheduleNextDoseNotification(nextDose: apiService.NextDose
     } catch (error) {
       console.error("[NotificationService] Error al programar o registrar PENDING:", error);
     }
-    // --- FIN DE LA NUEVA LÓGICA ---
 
   } else {
     console.log(`[NotificationService] No se programó la notificación porque la fecha (${triggerDate.toLocaleString('es-CL')}) ya pasó.`);

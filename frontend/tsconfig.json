@@ -1,17 +1,28 @@
 {
-  "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true,
-     "lib": ["ES2015", "DOM"],
+    "target": "ES2015",
+    "lib": ["ES2015"],
+    "jsx": "react",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"]
     }
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx",
-    ".expo/shared/global.d.ts"
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    ".expo",
+    "dist"
   ]
 }

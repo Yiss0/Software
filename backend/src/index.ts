@@ -499,7 +499,7 @@ app.post("/intakes", async (req: Request, res: Response) => {
         note: note,
       },
     });
-    res.status(201).json(intake);
+    res.status(201).json(intake);
   } catch (e: any) {
     console.error("Error en POST /intakes (upsert):", e.message);
     res.status(400).json({ error: (e as Error).message });
@@ -778,9 +778,71 @@ app.get(
     } catch (e) {
       console.error("Error next-dose:", e);
       res.status(500).json({ error: "No se pudo calcular la próxima dosis." });
-    }
-  }
+    }
+  }
 );
+
+// ========= NUEVO ENDPOINT PARA PACIENTES ==========
+// Permite que un paciente vincule un cuidador por email
+app.post(
+  "/patients/:patientId/link-caregiver",
+  async (req: Request, res: Response) => {
+    const { patientId } = req.params;
+    const { caregiverEmail } = req.body;
+    if (!caregiverEmail)
+      return res.status(400).json({ error: "Email del cuidador requerido" });
+    console.log(`[link-caregiver] request: patientId=${patientId}, caregiverEmail=${caregiverEmail}`);
+    // Verificar que el paciente indicado existe
+    const patient = await prisma.user.findUnique({ where: { id: patientId } });
+    if (!patient || patient.role !== 'PATIENT') {
+      console.warn(`[link-caregiver] patient not found or invalid role: patientId=${patientId}`);
+      return res.status(404).json({ error: 'Paciente no encontrado.' });
+    }
+    try {
+      const caregiver = await prisma.user.findUnique({
+        where: { email: caregiverEmail.toLowerCase().trim() },
+      });
+      console.log('[link-caregiver] caregiver found:', caregiver ? { id: caregiver.id, email: caregiver.email, role: caregiver.role } : null);
+      if (!caregiver || caregiver.role !== "CAREGIVER") {
+        console.warn(`[link-caregiver] caregiver not found or invalid role for email=${caregiverEmail}`);
+        return res.status(404).json({ error: "No se encontró un cuidador con ese email." });
+      }
+
+      // Verificar si ya existe el vínculo
+      const existing = await prisma.patientCaregiver.findUnique({
+        where: { patientId_caregiverId: { patientId, caregiverId: caregiver.id } },
+      });
+      if (existing) {
+        console.info(`[link-caregiver] link already exists patientId=${patientId} caregiverId=${caregiver.id}`);
+        return res.status(409).json({ error: 'Ya existe una conexión entre este paciente y cuidador.' });
+      }
+
+      console.log(`[link-caregiver] creating link patientId=${patientId} caregiverId=${caregiver.id}`);
+      const link = await prisma.patientCaregiver.create({
+        data: {
+          patientId: patientId,
+          caregiverId: caregiver.id,
+        },
+      });
+      console.log('[link-caregiver] link created:', link);
+      // Devuelve el enlace completo incluyendo la información del cuidador
+      const fullLink = await prisma.patientCaregiver.findUnique({
+        where: { id: link.id },
+        include: { caregiver: true },
+      });
+      res.status(201).json(fullLink);
+    } catch (e: any) {
+      console.error('[link-caregiver] error:', e);
+      if (e?.code === "P2002") {
+        return res
+          .status(409)
+          .json({ error: "Ya estás vinculado a este cuidador." });
+      }
+      res.status(500).json({ error: "Error interno del servidor." });
+    }
+  }
+);
+// ==================================================
 
 /**
  * --- NUEVA RUTA (ACTUALIZADA) ---

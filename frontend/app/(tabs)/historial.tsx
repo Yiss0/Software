@@ -1,6 +1,6 @@
 // frontend/app/(tabs)/historial.tsx (CORREGIDO)
 
-import { Calendar, CircleCheck as CheckCircle, Clock, Filter, CircleX as XCircle } from 'lucide-react-native';
+import { Calendar, CircleCheck as CheckCircle, Clock, CircleX as XCircle } from 'lucide-react-native';
 import React, { useState, useCallback } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, FlatList, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -8,6 +8,19 @@ import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import { usePatient } from '../../context/PatientContext';
 import * as apiService from '../../services/apiService';
+
+// --- FUNCIÓN PARA CONVERTIR UTC A HORA LOCAL ---
+const convertUTCTimeToLocalString = (utcTime: string): string => {
+  if (!/^\d{2}:\d{2}$/.test(utcTime)) return utcTime;
+  const [hours, minutes] = utcTime.split(':').map(Number);
+  const date = new Date();
+  date.setUTCHours(hours, minutes, 0, 0);
+  
+  const localHours = String(date.getHours()).padStart(2, '0');
+  const localMinutes = String(date.getMinutes()).padStart(2, '0');
+  
+  return `${localHours}:${localMinutes}`;
+};
 
 type HistorialItem = {
   id: string;
@@ -116,17 +129,17 @@ export default function HistorialScreen() {
        <View style={styles.medicationInfo}>
          <Text style={styles.medicationName}>{item.medicamento}</Text>
          <Text style={styles.medicationDose}>{item.dosis}</Text>
-         <View style={styles.timeInfo}>
+       <View style={styles.timeInfo}>
            <View style={styles.timeItem}>
              <Clock size={16} color="#6B7280" />
              <Text style={styles.timeLabel}>Planeado:</Text>
-             <Text style={styles.timeValue}>{new Date(item.horaPlaneada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+             <Text style={styles.timeValue}>{convertUTCTimeToLocalString(new Date(item.horaPlaneada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</Text>
            </View>
            {(item.estado === 'TAKEN' || item.estado === 'POSTPONED') && (
              <View style={styles.timeItem}>
                <CheckCircle size={16} color="#16A34A" />
                <Text style={styles.timeLabel}>Acción:</Text>
-               <Text style={styles.timeValue}>{new Date(item.horaTomada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+               <Text style={styles.timeValue}>{convertUTCTimeToLocalString(new Date(item.horaTomada).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</Text>
              </View>
            )}
          </View>
@@ -138,9 +151,6 @@ export default function HistorialScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Historial</Text>
-        <TouchableOpacity style={styles.filterButton}>
-          <Filter size={24} color="#2563EB" />
-        </TouchableOpacity>
       </View>
       <View style={styles.filterContainer}>
         <TouchableOpacity style={[styles.filterChip, filtroActivo === 'todos' && styles.filterChipActive]} onPress={() => setFiltroActivo('todos')}>
@@ -172,7 +182,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8FAFC', },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 20, },
   title: { fontSize: 28, fontWeight: '700', color: '#1F2937', },
-  filterButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 4, },
   filterContainer: { flexDirection: 'row', paddingHorizontal: 20, gap: 12, marginBottom: 20, },
   filterChip: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 25, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#D1D5DB', },
   filterChipActive: { backgroundColor: '#2563EB', borderColor: '#2563EB', },

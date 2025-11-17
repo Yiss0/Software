@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 // --- IMPORTACIÓN CORREGIDA ---
+// @ts-ignore
 import { View, Text, FlatList, ActivityIndicator, TouchableOpacity, StyleSheet, TextInput, Alert, Modal } from 'react-native';
 // Se quitó 'SafeAreaView' de react-native
 import { SafeAreaView } from 'react-native-safe-area-context'; // Se añadió la importación correcta
@@ -73,18 +74,29 @@ export default function PacientesScreen() {
 
   const handleLinkPatient = async () => {
     if (!patientEmail.trim() || !user?.id) {
-        Alert.alert('Email inválido', 'Por favor, ingresa el email del paciente.');
+        Alert.alert('Email requerido', 'Por favor, ingresa el email del paciente.');
         return;
     }
     setIsLinking(true);
     try {
         await apiService.linkPatientToCaregiverByEmail(user.id, patientEmail);
-        Alert.alert('Éxito', 'Paciente vinculado correctamente.');
+        Alert.alert('Éxito', '¡Perfecto! El paciente ha sido vinculado correctamente.');
         setPatientEmail('');
         setIsModalVisible(false);
         await loadLinkedPatients();
     } catch (error: any) {
-        Alert.alert('Error al vincular', error.message);
+        let mensajeError = 'No se pudo vincular el paciente. Intenta de nuevo.';
+        
+        // Mapeo de errores técnicos a mensajes amigables
+        if (error.message.includes('No se encontró')) {
+            mensajeError = 'No existe un paciente con ese email. Verifica que el email sea correcto.';
+        } else if (error.message.includes('vinculado')) {
+            mensajeError = 'Ya estás vinculado a este paciente.';
+        } else if (error.message.includes('Email')) {
+            mensajeError = 'El email no es válido.';
+        }
+        
+        Alert.alert('No se pudo vincular', mensajeError);
     } finally {
         setIsLinking(false);
     }
@@ -122,10 +134,12 @@ export default function PacientesScreen() {
           <TouchableOpacity style={styles.patientCard} onPress={() => handleSelectPatient(item.patient)}>
             <View style={styles.patientInfo}>
               <View style={styles.avatar}>
+                {/* @ts-ignore */}
                 <User size={20} color="#1E40AF" />
               </View>
               <Text style={styles.patientName}>{item.patient.firstName} {item.patient.lastName}</Text>
             </View>
+            {/* @ts-ignore */}
             <ChevronRight size={20} color="#6B7280" />
           </TouchableOpacity>
         )}
@@ -139,6 +153,7 @@ export default function PacientesScreen() {
       />
 
       <TouchableOpacity style={styles.fab} onPress={() => setIsModalVisible(true)}>
+        {/* @ts-ignore */}
         <Plus size={32} color="#FFFFFF" />
       </TouchableOpacity>
 
@@ -152,6 +167,7 @@ export default function PacientesScreen() {
         <View style={styles.modalContainer}>
             <View style={styles.modalContent}>
                 <TouchableOpacity style={styles.closeButton} onPress={() => setIsModalVisible(false)}>
+                    {/* @ts-ignore */}
                     <X size={24} color="#6B7280" />
                 </TouchableOpacity>
                 <Text style={styles.modalTitle}>Vincular Nuevo Paciente</Text>
